@@ -1,0 +1,173 @@
+// Detection engine access — Tauri IPC wrappers.
+// The Rust detection code lives in src-tauri/src/detector/ and is exposed
+// through the commands in src-tauri/src/commands.rs. Response shapes are
+// identical to the old map-detector HTTP microservice.
+
+import { invoke } from "@tauri-apps/api/core";
+
+export interface EcuIdentification {
+  manufacturer: string;
+  ecu_type: string;
+  variant?: string;
+  software_version?: string;
+  hardware_version?: string;
+  part_number?: string;
+  confidence: number;
+}
+
+export interface DetectionResults {
+  success: boolean;
+  maps: any[];
+  total_maps: number;
+  processing_time_ms: number;
+  file_size: number;
+  /** Version du moteur ayant produit ce résultat (voir detectorVersion). */
+  detector_version?: number;
+  /** Rapport de complétude EDC16 : familles attendues vs trouvées. */
+  expected_maps?: { label: string; expected: number; found: number }[];
+}
+
+/** ECU families the local app supports (must match src-tauri/ecus.json). */
+export const SUPPORTED_ECUS = new Set([
+  "EDC15P",
+  "EDC15V",
+  "EDC15VM",
+  "EDC16U1",
+  "EDC16U31",
+  "EDC16U34",
+]);
+
+export async function identifyEcu(
+  fileDataBase64: string,
+  fileName: string
+): Promise<EcuIdentification> {
+  return invoke<EcuIdentification>("identify_ecu", {
+    fileDataBase64,
+    fileName,
+  });
+}
+
+export async function detectMaps(args: {
+  fileDataBase64: string;
+  fileName: string;
+  ecuType?: string;
+  tunedMode?: boolean;
+}): Promise<DetectionResults> {
+  return invoke<DetectionResults>("detect_maps", {
+    request: {
+      file_data_base64: args.fileDataBase64,
+      file_name: args.fileName,
+      ecu_type: args.ecuType,
+      tuned_mode: args.tunedMode ?? false,
+    },
+  });
+}
+
+export async function listEcus(): Promise<{ ecus: any[]; total: number; version: string }> {
+  return invoke("list_ecus");
+}
+
+export interface OlsVersionInfo {
+  index: number;
+  size: number;
+  /** Human-readable label ("Original", "Stage 2 (DPFoff EGRoff)", ...) when the file's own
+   *  RevisionTag could be confidently split per version; absent otherwise. */
+  label?: string;
+}
+
+export interface OlsInspection {
+  make: string;
+  model: string;
+  manufacturer: string;
+  ecu_name: string;
+  hw_number: string;
+  sw_number: string;
+  versions: OlsVersionInfo[];
+  /** Version du format du conteneur (804 = WinOLS 5.84). */
+  format_version: number;
+  /** Maps définies dans le projet (0 : aucune, ou disposition WinOLS 4.x non lue). */
+  maps_count: number;
+  /** "hilo" / "lohi" : ordre des octets de la majorité de ces maps. */
+  byte_order?: string | null;
+}
+
+/**
+ * Recognises a `.ols` WinOLS project container (as opposed to a raw ECU dump) and lists its
+ * saved versions. Returns `null` when the file isn't one -- callers should fall back to treating
+ * it as a raw dump exactly as before this existed.
+ */
+export async function inspectOlsContainer(fileDataBase64: string): Promise<OlsInspection | null> {
+  return invoke<OlsInspection | null>("inspect_ols_container", { fileDataBase64 });
+}
+
+/**
+ * Extracts one saved version's raw ROM bytes out of a `.ols` container (`versionIndex` from
+ * `inspectOlsContainer`'s returned list). The result is base64-encoded raw dump bytes: feed it to
+ * `identifyEcu`/`detectMaps` exactly as if it had been the original file.
+ */
+export async function extractOlsVersion(fileDataBase64: string, versionIndex: number): Promise<string> {
+  return invoke<string>("extract_ols_version", { fileDataBase64, versionIndex });
+}
+
+/**
+ * Les maps définies dans un projet WinOLS (.ols), dans la forme d'un résultat
+ * de détection : c'est ce qu'un projet d'un calculateur sans détecteur
+ * Mamba affiche dans l'éditeur.
+ */
+export async function extractOlsMaps(fileDataBase64: string): Promise<DetectionResults> {
+  return invoke<DetectionResults>("extract_ols_maps", { fileDataBase64 });
+}
+
+export interface ImportedDefinitions {
+  success: boolean;
+  /** « XDF » (TunerPro) ou « JSON » (mappack), tel que reconnu dans le fichier. */
+  format: string;
+  total_maps: number;
+  maps: any[];
+  /** « hilo » / « lohi » : ordre des octets décrit par ces définitions. */
+  byte_order?: string | null;
+  processing_time_ms: number;
+}
+
+/**
+ * Lit un fichier de définitions de maps apporté par l'utilisateur — un .xdf
+ * TunerPro ou un mappack JSON — pour un binaire que le détecteur Mamba ne
+ * reconnaît pas. Le format est reconnu au contenu, pas à l'extension.
+ * `romSize` est la taille du binaire du projet : une définition qui pointe
+ * en dehors est écartée.
+ */
+export async function importMapDefinitions(args: {
+  fileDataBase64: string;
+  fileName: string;
+  romSize: number;
+}): Promise<ImportedDefinitions> {
+  return invoke<ImportedDefinitions>("import_map_definitions", {
+    fileDataBase64: args.fileDataBase64,
+    fileName: args.fileName,
+    romSize: args.romSize,
+  });
+}
+
+/**
+ * Version courante du moteur de détection. Un projet dont les résultats
+ * portent une version antérieure est re-scanné à l'ouverture : sans ça il
+ * resterait indéfiniment sur des adresses, facteurs ou libellés périmés.
+ */
+export async function detectorVersion(): Promise<number> {
+  try {
+    return await invoke<number>("detector_version");
+  } catch {
+    // Version antérieure à l'ajout de la commande : on ne force rien.
+    return 0;
+  }
+}
+
+/** Encode a byte array to base64 (chunked — fast for 2MB dumps). */
+export function bytesToBase64(bytes: Uint8Array): string {
+  const chunks: string[] = [];
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    chunks.push(String.fromCharCode(...bytes.subarray(i, i + chunkSize)));
+  }
+  return btoa(chunks.join(""));
+}

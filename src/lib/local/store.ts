@@ -1,0 +1,585 @@
+// Local project store — replaces PocketBase from the web version.
+// Everything lives on disk in the app data directory:
+//
+//   %APPDATA%/com.bobnautic.mamba/
+//     projects/
+//       <fileId>/
+//         project.json          FileRecord (metadata + detection results)
+//         original.bin          the imported binary, byte for byte
+//         versions.json         Version[] (the "Ori" + user versions)
+//         edits-<versionId>.json  MapEdit[] of one version
+//
+// All functions are async and go through the Tauri fs plugin, so they only
+// work inside the Tauri webview (not in a plain browser tab).
+
+import {
+  BaseDirectory,
+  exists,
+  mkdir,
+  readDir,
+  readFile,
+  readTextFile,
+  remove,
+  rename,
+  writeFile,
+  writeTextFile,
+} from "@tauri-apps/plugin-fs";
+import { invoke } from "@tauri-apps/api/core";
+import type { FileRecord, MapEdit, Version } from "@/lib/types";
+
+/** Open a project's folder in the Windows Explorer. */
+export async function openProjectDir(fileId: string): Promise<void> {
+  return invoke("open_project_dir", { fileId });
+}
+
+/** Total size in bytes of the projects folder (every project and version). */
+export async function projectsDirSize(): Promise<number> {
+  return invoke<number>("projects_dir_size");
+}
+
+const BASE = { baseDir: BaseDirectory.AppData };
+const PROJECTS_DIR = "projects";
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+export function newId(): string {
+  // PocketBase-style 15-char lowercase alphanumeric id
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let id = "";
+  const rand = new Uint8Array(15);
+  crypto.getRandomValues(rand);
+  for (let i = 0; i < 15; i++) id += chars[rand[i] % chars.length];
+  return id;
+}
+
+/**
+ * Écritures atomiques : le contenu est écrit dans un fichier temporaire voisin
+ * (nom unique, deux écritures simultanées ne se mélangent pas) puis renommé
+ * par-dessus la cible. writeTextFile / writeFile vident le fichier avant de
+ * l'écrire : un plantage ou une coupure entre les deux laissait un JSON
+ * tronqué, que les lectures ignorent sans rien dire — projet absent de la
+ * liste, version rouverte sans ses modifications, puis écrasée au prochain
+ * enregistrement. Le renommage remplace la cible d'un coup (Windows compris).
+ */
+async function replaceAtomically(path: string, write: (tmp: string) => Promise<void>): Promise<void> {
+  const tmp = `${path}.${newId()}.tmp`;
+  try {
+    await write(tmp);
+    await rename(tmp, path, { oldPathBaseDir: BaseDirectory.AppData, newPathBaseDir: BaseDirectory.AppData });
+  } catch (e) {
+    try {
+      await remove(tmp, BASE);
+    } catch {
+      // le fichier temporaire n'a peut-être jamais été créé
+    }
+    throw e;
+  }
+}
+
+function writeTextAtomic(path: string, content: string): Promise<void> {
+  return replaceAtomically(path, (tmp) => writeTextFile(tmp, content, BASE));
+}
+
+function writeBytesAtomic(path: string, bytes: Uint8Array): Promise<void> {
+  return replaceAtomically(path, (tmp) => writeFile(tmp, bytes, BASE));
+}
+
+async function ensureProjectsDir(): Promise<void> {
+  if (!(await exists(PROJECTS_DIR, BASE))) {
+    await mkdir(PROJECTS_DIR, { ...BASE, recursive: true });
+  }
+}
+
+function projectDir(fileId: string): string {
+  return `${PROJECTS_DIR}/${fileId}`;
+}
+
+/**
+ * Lecture-modification-écriture SÉRIALISÉES par fichier. updateFile,
+ * createVersion, updateVersion et deleteVersion relisent le JSON, le
+ * modifient puis le réécrivent : deux appels simultanés repartaient de la
+ * même lecture et le dernier écrit effaçait l'autre (six PATCH simultanés de
+ * champs différents n'en gardaient qu'un, cinq créations de version
+ * simultanées une seule). Même principe que la file des edits de maps.
+ */
+const fileQueues = new Map<string, Promise<unknown>>();
+
+function serialized<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const previous = fileQueues.get(key) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(task);
+  fileQueues.set(key, run);
+  run
+    .catch(() => undefined)
+    .then(() => {
+      if (fileQueues.get(key) === run) fileQueues.delete(key);
+    });
+  return run;
+}
+
+const projectFileKey = (fileId: string) => `${fileId}/project.json`;
+const versionsFileKey = (fileId: string) => `${fileId}/versions.json`;
+
+// ── Files (projects) ──────────────────────────────────────────────
+
+export async function listFiles(): Promise<FileRecord[]> {
+  await ensureProjectsDir();
+  const entries = await readDir(PROJECTS_DIR, BASE);
+  const files: FileRecord[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory) continue;
+    try {
+      const raw = await readTextFile(`${projectDir(entry.name)}/project.json`, BASE);
+      files.push(JSON.parse(raw) as FileRecord);
+    } catch {
+      // Skip unreadable/corrupted project folders instead of failing the list
+    }
+  }
+  files.sort((a, b) => (b.created > a.created ? 1 : -1));
+  return files;
+}
+
+export async function getFile(fileId: string): Promise<FileRecord | null> {
+  try {
+    const raw = await readTextFile(`${projectDir(fileId)}/project.json`, BASE);
+    return JSON.parse(raw) as FileRecord;
+  } catch {
+    return null;
+  }
+}
+
+async function saveFileRecord(record: FileRecord): Promise<void> {
+  record.updated = nowIso();
+  await writeTextAtomic(
+    `${projectDir(record.id)}/project.json`,
+    JSON.stringify(record, null, 2)
+  );
+}
+
+export async function updateFile(
+  fileId: string,
+  patch: Partial<FileRecord>
+): Promise<FileRecord | null> {
+  return serialized(projectFileKey(fileId), async () => {
+    const record = await getFile(fileId);
+    if (!record) return null;
+    Object.assign(record, patch, { id: record.id, created: record.created });
+    await saveFileRecord(record);
+    return record;
+  });
+}
+
+export async function deleteFile(fileId: string): Promise<boolean> {
+  const dir = projectDir(fileId);
+  if (!(await exists(dir, BASE))) return false;
+  await remove(dir, { ...BASE, recursive: true });
+  for (const [versionId, owner] of versionOwner) {
+    if (owner === fileId) versionOwner.delete(versionId);
+  }
+  return true;
+}
+
+export async function readBinary(fileId: string): Promise<Uint8Array | null> {
+  try {
+    return await readFile(`${projectDir(fileId)}/original.bin`, BASE);
+  } catch {
+    return null;
+  }
+}
+
+export interface CreateProjectInput {
+  fileName: string;
+  originalName?: string;
+  projectName?: string;
+  binary: Uint8Array;
+  ecuType?: string;
+  hardwareVersion?: string;
+  softwareVersion?: string;
+  detectionResults?: any;
+  mapsSource?: "detector" | "ols" | "both" | "imported";
+  byteOrder?: "hilo" | "lohi";
+  olsEcuName?: string;
+  vehicleBrand?: string;
+  vehicleModel?: string;
+  engineType?: string;
+  transmissionType?: string;
+  year?: string;
+  power?: string;
+  customer?: string;
+  stage?: string;
+  date?: string;
+  notes?: string;
+}
+
+export async function createProject(input: CreateProjectInput): Promise<{
+  file: FileRecord;
+  oriVersion: Version;
+}> {
+  await ensureProjectsDir();
+  const id = newId();
+  const created = nowIso();
+  const ext = input.fileName.includes(".")
+    ? input.fileName.split(".").pop()!.toLowerCase()
+    : "bin";
+
+  const record: FileRecord = {
+    id,
+    file_name: input.fileName,
+    original_name: input.originalName || input.fileName,
+    project_name: input.projectName,
+    file_size: input.binary.length,
+    file_type: ext,
+    ecu_type: input.ecuType,
+    hardware_version: input.hardwareVersion,
+    software_version: input.softwareVersion,
+    status: "completed",
+    maps_detected:
+      typeof input.detectionResults?.total_maps === "number"
+        ? input.detectionResults.total_maps
+        : 0,
+    detection_data: input.detectionResults ?? {},
+    maps_source: input.mapsSource,
+    byte_order: input.byteOrder,
+    ols_ecu_name: input.olsEcuName,
+    vehicle_brand: input.vehicleBrand,
+    vehicle_model: input.vehicleModel,
+    engine_type: input.engineType,
+    transmission_type: input.transmissionType,
+    year: input.year,
+    power: input.power,
+    customer: input.customer,
+    stage: input.stage,
+    date: input.date,
+    notes: input.notes,
+    created,
+    updated: created,
+  };
+
+  const oriVersion: Version = {
+    id: newId(),
+    file: id,
+    name: "Ori",
+    is_current: true,
+    base_version: null,
+    created,
+  };
+
+  // Transactional: a half-written project folder (no project.json) would be
+  // invisible but leak disk space — clean it up if any write fails.
+  try {
+    await mkdir(projectDir(id), { ...BASE, recursive: true });
+    await writeFile(`${projectDir(id)}/original.bin`, input.binary, BASE);
+    await writeVersions(id, [oriVersion]);
+    await writeTextAtomic(
+      `${projectDir(id)}/project.json`,
+      JSON.stringify(record, null, 2)
+    );
+  } catch (e) {
+    try {
+      await remove(projectDir(id), { ...BASE, recursive: true });
+    } catch {
+      // best effort cleanup
+    }
+    throw e;
+  }
+
+  return { file: record, oriVersion };
+}
+
+// ── Versions ──────────────────────────────────────────────────────
+
+// id de version → dossier du projet qui la porte. findVersion parcourait les
+// versions.json de TOUS les projets à chaque appel (ouvrir une version en
+// déclenche trois, chaque enregistrement un de plus) : le coût grandissait
+// avec le nombre de projets. Le cache n'est qu'un raccourci : la version est
+// toujours relue et vérifiée dans son projet, et une entrée périmée retombe
+// sur le parcours complet.
+const versionOwner = new Map<string, string>();
+
+export async function listVersions(fileId: string): Promise<Version[]> {
+  try {
+    const raw = await readTextFile(`${projectDir(fileId)}/versions.json`, BASE);
+    const versions = JSON.parse(raw) as Version[];
+    for (const v of versions) versionOwner.set(v.id, fileId);
+    return versions;
+  } catch {
+    return [];
+  }
+}
+
+async function writeVersions(fileId: string, versions: Version[]): Promise<void> {
+  await writeTextAtomic(
+    `${projectDir(fileId)}/versions.json`,
+    JSON.stringify(versions, null, 2)
+  );
+}
+
+export async function createVersion(
+  fileId: string,
+  name: string,
+  baseVersionId?: string | null,
+  setCurrent: boolean = true
+): Promise<Version | null> {
+  return serialized(versionsFileKey(fileId), async () => {
+    const versions = await listVersions(fileId);
+    if (versions.length === 0 && !(await getFile(fileId))) return null;
+    if (setCurrent) {
+      for (const v of versions) v.is_current = false;
+    }
+    const version: Version = {
+      id: newId(),
+      file: fileId,
+      name,
+      is_current: setCurrent,
+      base_version: baseVersionId || null,
+      created: nowIso(),
+    };
+    versions.push(version);
+    await writeVersions(fileId, versions);
+    versionOwner.set(version.id, fileId);
+    return version;
+  });
+}
+
+/** Find which project folder owns a version (versions carry their file id). */
+async function findVersion(
+  versionId: string
+): Promise<{ fileId: string; versions: Version[]; version: Version } | null> {
+  const cached = versionOwner.get(versionId);
+  if (cached) {
+    const versions = await listVersions(cached);
+    const version = versions.find((v) => v.id === versionId);
+    if (version) return { fileId: cached, versions, version };
+    versionOwner.delete(versionId);
+  }
+  await ensureProjectsDir();
+  const entries = await readDir(PROJECTS_DIR, BASE);
+  for (const entry of entries) {
+    if (!entry.isDirectory) continue;
+    const versions = await listVersions(entry.name);
+    const version = versions.find((v) => v.id === versionId);
+    if (version) return { fileId: entry.name, versions, version };
+  }
+  return null;
+}
+
+export async function updateVersion(
+  versionId: string,
+  patch: { name?: string; is_current?: boolean }
+): Promise<Version | null> {
+  const found = await findVersion(versionId);
+  if (!found) return null;
+  const { fileId } = found;
+  return serialized(versionsFileKey(fileId), async () => {
+    // relu dans la file : une écriture concurrente a pu passer entre-temps
+    const versions = await listVersions(fileId);
+    const version = versions.find((v) => v.id === versionId);
+    if (!version) return null;
+    if (patch.is_current === true) {
+      for (const v of versions) v.is_current = v.id === versionId;
+    } else if (patch.is_current === false) {
+      version.is_current = false;
+    }
+    if (patch.name !== undefined) version.name = patch.name;
+    await writeVersions(fileId, versions);
+    return version;
+  });
+}
+
+// ── Imported version binaries ─────────────────────────────────────
+// A version created by importing a file keeps that file on disk as
+// `version-<id>.bin` in the project folder. Without it the imported bytes
+// only lived in memory and the version reopened on the original file.
+
+export async function writeVersionBinary(
+  versionId: string,
+  bytes: Uint8Array
+): Promise<void> {
+  const found = await findVersion(versionId);
+  if (!found) throw new Error("version_not_found");
+  await writeBytesAtomic(`${projectDir(found.fileId)}/version-${versionId}.bin`, bytes);
+}
+
+export async function readVersionBinary(
+  versionId: string
+): Promise<Uint8Array | null> {
+  const found = await findVersion(versionId);
+  if (!found) return null;
+  const path = `${projectDir(found.fileId)}/version-${versionId}.bin`;
+  if (!(await exists(path, BASE))) return null;
+  return await readFile(path, BASE);
+}
+
+// Maps that only exist in an imported version: the codeblocks a multimap
+// adds on top of the original file. Kept as `version-<id>-maps.json` and
+// merged into the map list only while that version is open.
+export async function writeVersionExtraMaps(
+  versionId: string,
+  maps: unknown[]
+): Promise<void> {
+  const found = await findVersion(versionId);
+  if (!found) throw new Error("version_not_found");
+  await writeTextAtomic(
+    `${projectDir(found.fileId)}/version-${versionId}-maps.json`,
+    JSON.stringify(maps)
+  );
+}
+
+export async function readVersionExtraMaps(
+  versionId: string
+): Promise<unknown[] | null> {
+  const found = await findVersion(versionId);
+  if (!found) return null;
+  const path = `${projectDir(found.fileId)}/version-${versionId}-maps.json`;
+  if (!(await exists(path, BASE))) return null;
+  try {
+    const parsed = JSON.parse(await readTextFile(path, BASE));
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteVersion(
+  versionId: string
+): Promise<{ ok: boolean; error?: string }> {
+  const found = await findVersion(versionId);
+  if (!found) return { ok: false, error: "not_found" };
+  const { fileId } = found;
+  const removed = await serialized(versionsFileKey(fileId), async (): Promise<{ ok: boolean; error?: string }> => {
+    // relu dans la file : une écriture concurrente a pu passer entre-temps
+    const versions = await listVersions(fileId);
+    const version = versions.find((v) => v.id === versionId);
+    if (!version) return { ok: false, error: "not_found" };
+    if (version.name === "Ori") return { ok: false, error: "cannot_delete_ori" };
+    if (versions.length <= 1) return { ok: false, error: "last_version" };
+
+    const remaining = versions.filter((v) => v.id !== versionId);
+    if (version.is_current && remaining.length > 0) {
+      // Promote the most recent remaining version
+      remaining.reduce((a, b) => (a.created > b.created ? a : b)).is_current = true;
+    }
+    await writeVersions(fileId, remaining);
+    versionOwner.delete(versionId);
+    return { ok: true };
+  });
+  if (!removed.ok) return removed;
+  try {
+    await remove(`${projectDir(fileId)}/edits-${versionId}.json`, BASE);
+  } catch {
+    // No edits file for this version — nothing to clean up
+  }
+  try {
+    await remove(`${projectDir(fileId)}/version-${versionId}.bin`, BASE);
+  } catch {
+    // Not an imported version — no binary to clean up
+  }
+  try {
+    await remove(`${projectDir(fileId)}/version-${versionId}-maps.json`, BASE);
+  } catch {
+    // No extra maps for this version
+  }
+  return { ok: true };
+}
+
+// ── Map edits ─────────────────────────────────────────────────────
+
+export async function listMapEdits(versionId: string): Promise<MapEdit[]> {
+  const found = await findVersion(versionId);
+  if (!found) return [];
+  try {
+    const raw = await readTextFile(
+      `${projectDir(found.fileId)}/edits-${versionId}.json`,
+      BASE
+    );
+    return JSON.parse(raw) as MapEdit[];
+  } catch {
+    return [];
+  }
+}
+
+// Écritures SÉRIALISÉES par version : l'éditeur envoie les edits de chaque
+// map en parallèle (Promise.all), et un read-modify-write concurrent sur
+// edits-<version>.json ne gardait que le dernier écrit — les modifications
+// des autres maps (maps similaires, copier/coller, plusieurs maps éditées à
+// la main) disparaissaient à l'enregistrement.
+const mapEditQueues = new Map<string, Promise<void>>();
+
+export async function addMapEdit(
+  versionId: string,
+  mapAddress: number,
+  payload: any
+): Promise<MapEdit | null> {
+  const previous = mapEditQueues.get(versionId) ?? Promise.resolve();
+  let result: MapEdit | null = null;
+  const run = previous
+    .catch(() => undefined)
+    .then(async () => {
+      result = await addMapEditUnlocked(versionId, mapAddress, payload);
+    });
+  mapEditQueues.set(versionId, run);
+  try {
+    await run;
+  } finally {
+    if (mapEditQueues.get(versionId) === run) mapEditQueues.delete(versionId);
+  }
+  return result;
+}
+
+/** REMPLACE tous les edits d'une version (un enregistrement = l'état complet). */
+export async function replaceMapEdits(
+  versionId: string,
+  edits: { mapAddress: number; payload: any }[]
+): Promise<MapEdit[] | null> {
+  const previous = mapEditQueues.get(versionId) ?? Promise.resolve();
+  let result: MapEdit[] | null = null;
+  const run = previous
+    .catch(() => undefined)
+    .then(async () => {
+      const found = await findVersion(versionId);
+      if (!found) return;
+      const list: MapEdit[] = edits.map((e) => ({
+        id: newId(),
+        version: versionId,
+        map_address: e.mapAddress ?? -1,
+        payload: e.payload ?? {},
+        created: nowIso(),
+      }));
+      await writeTextAtomic(
+        `${projectDir(found.fileId)}/edits-${versionId}.json`,
+        JSON.stringify(list)
+      );
+      result = list;
+    });
+  mapEditQueues.set(versionId, run);
+  try {
+    await run;
+  } finally {
+    if (mapEditQueues.get(versionId) === run) mapEditQueues.delete(versionId);
+  }
+  return result;
+}
+
+async function addMapEditUnlocked(
+  versionId: string,
+  mapAddress: number,
+  payload: any
+): Promise<MapEdit | null> {
+  const found = await findVersion(versionId);
+  if (!found) return null;
+  const edits = await listMapEdits(versionId);
+  const edit: MapEdit = {
+    id: newId(),
+    version: versionId,
+    map_address: mapAddress,
+    payload: payload ?? {},
+    created: nowIso(),
+  };
+  edits.push(edit);
+  await writeTextAtomic(
+    `${projectDir(found.fileId)}/edits-${versionId}.json`,
+    JSON.stringify(edits)
+  );
+  return edit;
+}
