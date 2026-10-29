@@ -63,13 +63,15 @@ Weitere Familien folgen, siehe [Roadmap](ROADMAP.de.md).
 
 ## Download
 
-Installer gibt es unter **[Releases](https://github.com/bobnautic/Mamba/releases)**:
+Installer gibt es unter **[Releases](https://github.com/bobnautic/Mamba/releases/latest)**, jede Version mit eigenen Dateien und `SHA256SUMS.txt`:
 
 | System | Datei |
 |---|---|
 | Windows 10/11 | `Mamba_x.y.z_x64-setup.exe` |
 | macOS 12+ (Apple Silicon und Intel) | `Mamba_x.y.z_macos-universal.dmg` |
 | Linux | `Mamba_x.y.z_linux-x86_64.AppImage` oder `.deb` |
+
+Ältere Versionen bleiben unter [allen Releases](https://github.com/bobnautic/Mamba/releases) verfügbar. Windows zeigt beim ersten Start eine SmartScreen-Warnung, weil der Installer nicht signiert ist: *Weitere Informationen › Trotzdem ausführen*.
 
 Die macOS-Version ist nicht signiert. Erlaube sie beim ersten Start unter *Systemeinstellungen › Datenschutz & Sicherheit › Trotzdem öffnen*, oder installiere per Terminal:
 

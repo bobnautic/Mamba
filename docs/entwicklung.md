@@ -59,7 +59,39 @@ Die Pfade je System stehen in der [Benutzung](benutzung.md#11-daten-und-sicherun
 
 ## Release
 
-Ein Release entsteht, sobald ein Tag `vX.Y.Z` gepusht wird ([`.github/workflows/release.yml`](../.github/workflows/release.yml)). Der Workflow baut die Installer für Windows, macOS (universal) und Linux. Die App findet neue Releases über die automatische Update-Prüfung.
+Releases baut und veröffentlicht der Workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml). So entsteht Version `X.Y.Z`:
+
+1. **Version setzen.** Die Versionsnummer steht in fünf Dateien (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`). Ein Befehl setzt sie überall:
+
+   ```bash
+   npm run version:set -- 1.1.0
+   ```
+
+2. **Release-Notizen (optional)** in `docs/releases/v1.1.0.md` schreiben: eine Titelzeile `Mamba 1.1.0`, Abschnitte in Fett (`**Editor**`) und Punkte mit `- `. So zeigt sie auch das Update-Fenster der App an. Fehlt die Datei, nimmt der Workflow die Liste der seit dem letzten Release gemergten Pull Requests.
+3. **Mergen** nach `main`. Die CI prüft, dass die Version in allen Dateien gleich ist.
+4. **Veröffentlichen**, auf einem der beiden Wege:
+   - auf GitHub unter *Actions › Release › Run workflow* mit Branch `main` und Haken bei **publish**; der Tag `v1.1.0` wird dabei angelegt, oder
+   - per Tag:
+
+     ```bash
+     git tag v1.1.0 && git push origin v1.1.0
+     ```
+
+Der Workflow prüft zuerst, dass Tag und Version zusammenpassen und der Tag neu ist, baut dann parallel auf Windows, macOS und Linux und veröffentlicht das Release mit diesen Dateien:
+
+| Datei | Wofür |
+|---|---|
+| `Mamba_X.Y.Z_x64-setup.exe` | Windows-Installer (NSIS) |
+| `Mamba_X.Y.Z_macos-universal.dmg` | macOS, Apple Silicon und Intel, Erstinstallation |
+| `Mamba_X.Y.Z_macos-universal.app.tar.gz` | macOS-Update in der App und `install-macos.sh` |
+| `Mamba_X.Y.Z_linux-x86_64.AppImage`, `Mamba_X.Y.Z_linux-amd64.deb` | Linux |
+| `SHA256SUMS.txt` | Prüfsummen aller Dateien |
+
+Jede Version bleibt unter [Releases](https://github.com/bobnautic/Mamba/releases) mit ihren eigenen Dateien abrufbar. Die App findet das neueste Release über die automatische Update-Prüfung; die Dateinamen sind die, die der Updater (`src-tauri/src/update.rs`) erwartet.
+
+Ein Testbuild ohne Veröffentlichung: *Run workflow* ohne Haken bei **publish**. Pull Requests, die den Workflow, die Tauri-Konfiguration, Icons oder Installer-Dateien ändern, bauen ebenfalls alle Installer. Die Dateien liegen dann als Artefakte am Workflow-Lauf.
+
+Die Installer sind nicht signiert: Windows zeigt beim ersten Start die SmartScreen-Warnung, macOS verlangt *Trotzdem öffnen*. Für signierte Builds braucht es ein Windows-Code-Signing-Zertifikat bzw. eine Apple Developer ID.
 
 ## Design
 
