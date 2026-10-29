@@ -8,10 +8,5 @@ This program is free software: you can redistribute it and/or modify it
 under the terms of the GNU General Public License version 3 (see LICENSE).
 It is distributed WITHOUT ANY WARRANTY; see LICENSE for details.
 
-Additional term under GPL-3.0 §7(e), kept as the license requires:
-The "ZedSuite" name, logo, mascot and application icons are trademarks of
-ZedPerf and are NOT covered by the GPL license grant. Mamba does not use
-them.
-
 Mamba builds are published at:
 https://github.com/bobnautic/Mamba/releases
