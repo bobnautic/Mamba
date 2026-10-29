@@ -1,20 +1,94 @@
 name: Release
 
-# Push a tag `vX.Y.Z` (matching the version in package.json, Cargo.toml and
-# tauri.conf.json) to build the installers and publish them as a draft
-# release. Asset names follow the convention the built-in updater expects
-# (src-tauri/src/update.rs) and install-macos.sh downloads.
+# Builds the installers and publishes them as a GitHub release with versioned
+# file names (Mamba_X.Y.Z_x64-setup.exe, Mamba_X.Y.Z_macos-universal.dmg, …).
+#
+# Release X.Y.Z: set the version with `npm run version:set -- X.Y.Z`, merge
+# that to main, then either
+#  - push the tag vX.Y.Z, or
+#  - run this workflow on main (Actions › Release › Run workflow) with
+#    "publish" ticked: the tag vX.Y.Z is created from package.json.
+# A manual run without "publish" and a pull request that touches the
+# packaging only build the installers and keep them as workflow artifacts.
+#
+# Asset names follow the convention the built-in updater expects
+# (src-tauri/src/update.rs) and install-macos.sh downloads. Release notes come
+# from docs/releases/vX.Y.Z.md when that file exists, otherwise from the pull
+# requests merged since the previous release.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the release (creates the tag vX.Y.Z from the version in package.json)
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/set-version.mjs
+      - src-tauri/tauri*.conf.json
+      - src-tauri/icons/**
+      - src-tauri/nsis/**
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: v
+        name: Check version
+        env:
+          PUBLISH_INPUT: ${{ inputs.publish }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          V=$(node scripts/set-version.mjs --check)
+          TAG="v$V"
+          PUBLISH=false
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "$GITHUB_REF_NAME" != "$TAG" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match the app version $V. Run 'npm run version:set -- ${GITHUB_REF_NAME#v}', merge it, then tag that commit."
+              exit 1
+            fi
+            PUBLISH=true
+          elif [ "$PUBLISH_INPUT" = true ]; then
+            if [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+              echo "::error::Releases are published from $DEFAULT_BRANCH, not $GITHUB_REF_NAME."
+              exit 1
+            fi
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+              echo "::error::Tag $TAG already exists. Bump the version with 'npm run version:set -- X.Y.Z' first."
+              exit 1
+            fi
+            PUBLISH=true
+          fi
+          echo "Version $V, tag $TAG, publish $PUBLISH"
+          {
+            echo "version=$V"
+            echo "tag=$TAG"
+            echo "publish=$PUBLISH"
+          } >> "$GITHUB_OUTPUT"
+
   build:
+    name: Build (${{ matrix.platform }})
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -26,6 +100,8 @@ jobs:
           - os: ubuntu-22.04
             platform: linux
     runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -58,36 +134,79 @@ jobs:
       - name: Collect assets
         shell: bash
         run: |
-          V=$(node -p "require('./package.json').version")
           mkdir -p dist
           case "${{ matrix.platform }}" in
             windows)
-              cp src-tauri/target/release/bundle/nsis/*-setup.exe "dist/Mamba_${V}_x64-setup.exe" ;;
+              cp src-tauri/target/release/bundle/nsis/Mamba_*-setup.exe "dist/Mamba_${VERSION}_x64-setup.exe" ;;
             macos)
               B=src-tauri/target/universal-apple-darwin/release/bundle
-              cp "$B"/dmg/*.dmg "dist/Mamba_${V}_macos-universal.dmg"
-              tar -czf "dist/Mamba_${V}_macos-universal.app.tar.gz" -C "$B/macos" Mamba.app ;;
+              cp "$B"/dmg/Mamba_*.dmg "dist/Mamba_${VERSION}_macos-universal.dmg"
+              tar -czf "dist/Mamba_${VERSION}_macos-universal.app.tar.gz" -C "$B/macos" Mamba.app ;;
             linux)
-              cp src-tauri/target/release/bundle/appimage/*.AppImage "dist/Mamba_${V}_linux-x86_64.AppImage"
-              cp src-tauri/target/release/bundle/deb/*.deb "dist/Mamba_${V}_linux-amd64.deb" ;;
+              cp src-tauri/target/release/bundle/appimage/Mamba_*.AppImage "dist/Mamba_${VERSION}_linux-x86_64.AppImage"
+              cp src-tauri/target/release/bundle/deb/Mamba_*.deb "dist/Mamba_${VERSION}_linux-amd64.deb" ;;
           esac
           ls -l dist
       - uses: actions/upload-artifact@v4
         with:
           name: mamba-${{ matrix.platform }}
           path: dist/*
+          if-no-files-found: error
 
   publish:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: Publish release
+    needs: [version, build]
+    if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          name: Mamba ${{ github.ref_name }}
-          files: dist/*
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Release notes
+        run: |
+          if [ -f "docs/releases/$TAG.md" ]; then
+            cp "docs/releases/$TAG.md" notes.md
+          else
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" --jq .body > notes.md
+          fi
+          # The update dialog in the app stops reading at the "---" rule:
+          # the download table below is for the release page only.
+          cat >> notes.md <<'EOF'
+
+          ---
+
+          ### Download
+
+          | System | Datei |
+          |---|---|
+          | Windows 10/11 (64 Bit) | [Mamba_@V@_x64-setup.exe](@URL@/Mamba_@V@_x64-setup.exe) |
+          | macOS 12+ (Apple Silicon und Intel) | [Mamba_@V@_macos-universal.dmg](@URL@/Mamba_@V@_macos-universal.dmg) |
+          | Linux | [AppImage](@URL@/Mamba_@V@_linux-x86_64.AppImage) · [.deb](@URL@/Mamba_@V@_linux-amd64.deb) |
+
+          Die Installer sind nicht signiert. Windows: *Weitere Informationen › Trotzdem ausführen*. macOS: *Systemeinstellungen › Datenschutz & Sicherheit › Trotzdem öffnen*, oder per Terminal `curl -fsSL https://raw.githubusercontent.com/@REPO@/main/install-macos.sh | sh`. Prüfsummen in `SHA256SUMS.txt`.
+          EOF
+          sed -i \
+            -e "s|@URL@|https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG|g" \
+            -e "s|@V@|$VERSION|g" \
+            -e "s|@REPO@|$GITHUB_REPOSITORY|g" notes.md
+          cat notes.md
+      - name: Publish
+        run: |
+          gh release create "$TAG" dist/* \
+            --title "Mamba $VERSION" \
+            --notes-file notes.md \
+            --target "$GITHUB_SHA"

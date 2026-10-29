@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build",
+    "version:set": "node scripts/set-version.mjs",
     "clean": "rm -rf .next out node_modules"
   },
   "dependencies": {
