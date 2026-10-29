@@ -20,6 +20,8 @@ Kein Konto, keine Cloud, keine Limits: Alles läuft lokal, deine Dateien bleiben
 ## 🐍 Was Mamba kann
 
 - **Automatische Kennfelderkennung** — eingebaute Rust-Engine mit Detektoren pro Steuergerätefamilie (VAG Bosch EDC15/EDC16)
+- **ECU-Erkennung für jedes Binary** — liest die Identifikationsblöcke im Flash, egal von welchem Hersteller: Steuergerätehersteller und -familie (z. B. EDC17C46, MED17.7.1, MD1CP001, SIMOS18, SID, DCM, Marelli), Hardware-, Software- und Teilenummern, Datenstand, VAG-ODX-Kennung und SW-Index, Motor und Motorkennbuchstaben, Fahrzeughersteller, Prozessor und Byte-Reihenfolge — auch für Steuergeräte ohne Mamba-Kennfelddetektor
+- **Projektverwaltung** — Bibliothek mit Suche über alle Felder (auch FIN, Kennzeichen, Tags und alle im Binary gefundenen Nummern), Filter nach Steuergerät, Marke, Stage und Kraftstoff, Sortierung, Duplikaterkennung per SHA-256 („diese Datei ist schon in deiner Bibliothek“), Projekt duplizieren, Export und Import als `.mamba`-Archiv (Original, alle Versionen und Kennfeldänderungen in einer Datei)
 - **Eigene Kennfelddefinitionen (Beta)** — beliebiges Binary öffnen und ein WinOLS-`.ols`-Projekt, eine TunerPro-`.xdf` oder ein JSON-Mappack importieren
 - **Vollständigkeitsprüfung** — ein Badge zeigt, ob alle für die Familie erwarteten Kennfelder gefunden wurden
 - **Kennfeld-Editor** — Tabelle, 2D-Graph und 3D-Fläche, Tastaturnavigation, Kopieren/Einfügen zwischen Kennfeldern (auch mit Excel), absolute, additive und prozentuale Änderungen, Übertragen auf ähnliche Kennfelder, WinOLS-Tastenkürzel
@@ -43,9 +45,11 @@ Kein Konto, keine Cloud, keine Limits: Alles läuft lokal, deine Dateien bleiben
 | Bosch EDC16U31 | Signatur |
 | Bosch EDC16U34 | Signatur |
 
-**Alle anderen Steuergeräte öffnen sich trotzdem.** Begrenzt ist nur die automatische Erkennung, nicht die App: Jedes Binary kann geöffnet werden, die Kennfeldliste kommt dann aus einem `.ols`-Projekt, einer `.xdf` oder einem JSON-Mappack.
+**Alle anderen Steuergeräte öffnen sich trotzdem.** Begrenzt ist nur die automatische Kennfelderkennung, nicht die App: Jedes Binary kann geöffnet werden, die Kennfeldliste kommt dann aus einem `.ols`-Projekt, einer `.xdf` oder einem JSON-Mappack.
 
-Die Identifikation ist bewusst streng: Eine Datei wird nur dann als eine dieser Familien geöffnet, wenn es positive Belege gibt (Bosch-Hardwarenummern, Familienkennungen, strukturelle Signaturen). Ein 2-MB-Dump eines anderen Steuergeräts (EDC17, Marelli, Siemens …) wird abgelehnt, statt als EDC16 fehlinterpretiert zu werden.
+Erkannt wird dabei trotzdem jedes Steuergerät, dessen Flash seine Kennung trägt: Die ECU-Erkennung liest die Identifikationsblöcke von Bosch (Familienkennung wie `34/1/EDC17C64/5/P866//…`, 1037-Softwarenummer, 0281/0261-Hardwarenummer), Continental/Siemens, Delphi, Magneti Marelli und der Fahrzeughersteller (VAG-ODX-Kennung und Teilenummern, Mercedes, PSA, Ford …). Das Projekt heißt dann „Bosch EDC17C46“ statt „Unbekannt“, Hersteller, Motor und Kraftstoff werden vorausgefüllt, und die Byte-Reihenfolge folgt der Familie (oder wird an den Kennfeldachsen geschätzt).
+
+Die Zuordnung zu einem Kennfelddetektor bleibt bewusst streng: Eine Datei wird nur dann als eine der Familien oben behandelt, wenn es positive Belege gibt (Bosch-Hardwarenummern, Familienkennungen, strukturelle Signaturen). Ein 2-MB-Dump eines anderen Steuergeräts (EDC17, Marelli, Siemens …) wird nie als EDC16 fehlinterpretiert: Er öffnet sich als erkanntes Steuergerät ohne Kennfelddetektor.
 
 ### Tipp für stark modifizierte Dateien
 
@@ -111,6 +115,8 @@ src/                  Next.js-Frontend (statischer Export, in der Tauri-Webview)
   lib/ecu/            TypeScript-Helfer für Steuergeräte (DTC-Listen, Prüfsummen)
 src-tauri/            Rust-Desktop-Shell
   src/detector/       die Erkennungs-Engine (ein Ordner pro Hersteller)
+  src/detector/ecu_recognition.rs   ECU-Erkennung für jedes Binary (Identifikationsblöcke)
+  src/project_archive.rs            Projektarchive (.mamba): Export, Import, Duplizieren
   src/commands.rs     IPC-Befehle für das Frontend
   icons/              App-Icons und Installer-Grafiken (aus public/mamba-icon.svg)
 ```

@@ -25,6 +25,11 @@ serde_json = "1.0"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 base64 = "0.22"
 log = "0.4"
+# ECU recognition (identification blocks) and project fingerprints
+regex = "1"
+sha2 = "0.10"
+# Project archives (.mamba)
+flate2 = "1"
 # Update system: GitHub releases check + installer download
 reqwest = { version = "0.12", features = ["json"] }
 

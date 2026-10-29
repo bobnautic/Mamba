@@ -8,6 +8,7 @@ pub mod mappack_import;
 pub mod models;
 pub mod ols_import;
 pub mod ols_maps;
+pub mod project_archive;
 pub mod update;
 pub mod xdf_import;
 
@@ -83,6 +84,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::identify_ecu,
+            commands::inspect_binary,
+            commands::inspect_project,
+            commands::export_project,
+            commands::import_project,
+            commands::duplicate_project,
             commands::inspect_ols_container,
             commands::extract_ols_version,
             commands::extract_ols_maps,

@@ -4,6 +4,7 @@
 // identical to the old map-detector HTTP microservice.
 
 import { invoke } from "@tauri-apps/api/core";
+import type { EcuRecognition } from "@/lib/types";
 
 export interface EcuIdentification {
   manufacturer: string;
@@ -45,6 +46,33 @@ export async function identifyEcu(
     fileDataBase64,
     fileName,
   });
+}
+
+export interface BinaryInspection {
+  size: number;
+  /** SHA-256 du binaire, en hexadécimal */
+  sha256: string;
+  /** Identification stricte : décide du détecteur de maps */
+  identification: EcuIdentification;
+  /** Reconnaissance universelle : identité de l'ECU, quel qu'il soit */
+  recognition: EcuRecognition;
+}
+
+/**
+ * Pré-vol de l'écran Nouveau projet : taille, empreinte SHA-256,
+ * identification stricte et reconnaissance universelle de l'ECU, en un seul
+ * passage sur les octets.
+ */
+export async function inspectBinary(
+  fileDataBase64: string,
+  fileName: string
+): Promise<BinaryInspection> {
+  return invoke<BinaryInspection>("inspect_binary", { fileDataBase64, fileName });
+}
+
+/** Même chose pour le binaire d'origine d'un projet déjà enregistré. */
+export async function inspectProject(fileId: string): Promise<BinaryInspection> {
+  return invoke<BinaryInspection>("inspect_project", { fileId });
 }
 
 export async function detectMaps(args: {

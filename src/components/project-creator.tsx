@@ -11,8 +11,16 @@ import { useRouter } from "next/navigation";
 import axios from "axios";
 import { MODAL_GLASS, MODAL_GLASS_LIGHT } from "@/lib/modal-glass";
 import { useThemeOptional } from "@/contexts/theme-context";
-import { identifyEcu, detectMaps, inspectOlsContainer, extractOlsVersion, extractOlsMaps, type OlsVersionInfo, type OlsInspection } from "@/lib/local/detector";
+import { inspectBinary, detectMaps, inspectOlsContainer, extractOlsVersion, extractOlsMaps, type OlsVersionInfo, type OlsInspection } from "@/lib/local/detector";
 import * as localStore from "@/lib/local/store";
+import type { EcuRecognition, FileRecord } from "@/lib/types";
+import { EcuRecognitionCard } from "@/components/ecu-recognition-card";
+import {
+  FUEL_VALUES,
+  brandFromRecognition,
+  brandOptions,
+  engineFromRecognition,
+} from "@/lib/project-meta";
 import MambaGradientDefs, { MambaFileIcon } from "@/components/mamba-gradient-defs";
 // Listes déroulantes au style de l'app (même composant que la langue des paramètres)
 import { StyledSelect } from "@/components/styled-select";
@@ -20,6 +28,8 @@ import { lookupEcuBrand } from "@/lib/ecu-brand-db";
 
 interface ProjectCreatorProps {
   onProjectCreated?: (projectId: string) => void;
+  /** Le binaire choisi est déjà dans la bibliothèque : ouvrir ce projet-là */
+  onOpenExisting?: (file: FileRecord) => void;
 }
 
 interface ECUIdentification {
@@ -48,7 +58,7 @@ function getStageIconStyles(stage?: string, isLight?: boolean) {
   }
 }
 
-export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
+export function ProjectCreator({ onProjectCreated, onOpenExisting }: ProjectCreatorProps) {
   const router = useRouter();
   const { toast } = useToast();
   const { t } = useI18n();
@@ -56,12 +66,21 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [ecuIdentification, setEcuIdentification] = useState<ECUIdentification | null>(null);
-  // Pourquoi le calculateur n'est pas pris en charge, quand il ne l'est pas :
-  // « not-detected » = le détecteur ne reconnaît pas ce binaire — le projet
-  // s'ouvre quand même et l'utilisateur y importe ses propres définitions de
-  // maps ; « disabled » = calculateur reconnu mais désactivé dans la base,
-  // et là rien ne s'ouvre.
-  const [unsupportedReason, setUnsupportedReason] = useState<"not-detected" | "disabled" | null>(null);
+  // « not-detected » : aucun détecteur de maps Mamba pour ce binaire. Le
+  // projet s'ouvre quand même et l'utilisateur y importe ses propres
+  // définitions de maps. Vaut aussi pour un calculateur que la
+  // reconnaissance universelle identifie (EDC17, MED17, SIMOS…) : il est
+  // nommé, mais ses maps viennent des définitions importées.
+  const [unsupportedReason, setUnsupportedReason] = useState<"not-detected" | null>(null);
+  // Carte d'identité de l'ECU lue dans le binaire (quel qu'il soit) et
+  // empreinte SHA-256, comme le pré-vol « inspect » de StageX
+  const [recognition, setRecognition] = useState<EcuRecognition | null>(null);
+  const [sha256, setSha256] = useState<string | null>(null);
+  // Projet de la bibliothèque dont l'original est exactement ce binaire
+  const [existingProject, setExistingProject] = useState<FileRecord | null>(null);
+  // Empreinte du fichier en cours : une recherche de doublon partie pour un
+  // fichier remplacé entre-temps ne doit rien afficher
+  const currentShaRef = useRef<string | null>(null);
   const [versioningInfo, setVersioningInfo] = useState<{
     fileId?: string;
     currentVersionId?: string;
@@ -97,7 +116,8 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
   /** Marque du projet WinOLS ramenée à une entrée de la liste, sinon rien */
   const brandFromOls = (make: string): string => {
     const m = make.trim().toLowerCase();
-    return ["Audi", "Seat", "Skoda", "Volkswagen"].find((b) => b.toLowerCase() === m) || "";
+    const alias: Record<string, string> = { vw: "Volkswagen", mercedes: "Mercedes-Benz", "mercedes benz": "Mercedes-Benz" };
+    return alias[m] || brandOptions().find((b) => b.toLowerCase() === m) || "";
   };
 
   // Form state
@@ -112,6 +132,10 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
   const [stage, setStage] = useState("");
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState("");
+  const [fuel, setFuel] = useState("");
+  const [vin, setVin] = useState("");
+  const [plate, setPlate] = useState("");
+  const [tags, setTags] = useState("");
 
   const { platform } = useSettings();
   // Suit le thème de l'écran hôte
@@ -195,13 +219,40 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
   const identifyAndSetState = async (fileDataBase64: string, fileName: string, ols: OlsInspection | null = null) => {
     setIsAnalyzing(true);
     setUnsupportedReason(null);
+    setRecognition(null);
+    setSha256(null);
+    setExistingProject(null);
     try {
       fileBase64Ref.current = fileDataBase64; // Cache for later use (detection + project creation)
 
-      // Identify the ECU type via the embedded Rust detection engine
-      const identResult = await identifyEcu(fileDataBase64, fileName);
+      // Un seul passage sur les octets : identification stricte (elle choisit
+      // le détecteur de maps), reconnaissance universelle et empreinte
+      const inspection = await inspectBinary(fileDataBase64, fileName);
+      const identResult = inspection.identification;
+      const rec = inspection.recognition;
+      setRecognition(rec);
+      setSha256(inspection.sha256);
+      currentShaRef.current = inspection.sha256;
+      localStore
+        .findBySha256(inspection.sha256)
+        .then((found) => {
+          if (currentShaRef.current === inspection.sha256) setExistingProject(found);
+        })
+        .catch(() => undefined);
 
-      // Pris en charge = identifié ET activé dans la base des calculateurs
+      // Ce que la reconnaissance lit dans le binaire pré-remplit le formulaire,
+      // sans jamais écraser une saisie
+      const recBrand = brandFromRecognition(rec);
+      if (recBrand) setVehicleBrand((prev) => prev || recBrand);
+      const recEngine = engineFromRecognition(rec);
+      if (recEngine) setEngineType((prev) => prev || recEngine);
+      if (rec.fuel && (FUEL_VALUES as readonly string[]).includes(rec.fuel)) {
+        setFuel((prev) => prev || rec.fuel!);
+      }
+      const recBrandInfo = lookupEcuBrand(rec.hardware_number, rec.part_number, rec.hardware_part_number);
+      if (recBrandInfo) setVehicleBrand((prev) => prev || recBrandInfo.b);
+
+      // Pris en charge = un détecteur de maps Mamba existe pour ce type
       const identified = !!(identResult?.ecu_type && identResult.ecu_type !== "Unknown");
       let supported = identified;
       if (identified) {
@@ -231,26 +282,21 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
         return;
       }
       if (!supported) {
-        if (identified) {
-          toast({
-            title: t.errors.ecuIdentificationFailed,
-            description: `ECU type "${identResult.ecu_type}" is currently disabled.`,
-            variant: "destructive",
-          });
-        }
-        // Le projet WinOLS porte souvent la marque, le modèle et les
-        // numéros que son auteur a saisis, même quand il ne définit
-        // aucune map : on les garde, c'est tout ce qu'on sait du fichier.
+        // Pas de détecteur Mamba : le type reste « Unknown » (aucune
+        // détection, aucune comparaison de type à l'import d'une version),
+        // le projet porte l'identité lue par la reconnaissance. Le projet
+        // WinOLS porte souvent la marque, le modèle et les numéros que son
+        // auteur a saisis : ils priment.
         setEcuIdentification({
           manufacturer: "Unknown",
           ecu_type: "Unknown",
-          hardware_version: ols?.hw_number || undefined,
-          software_version: ols?.sw_number || undefined,
+          hardware_version: ols?.hw_number || rec.hardware_number || undefined,
+          software_version: ols?.sw_number || rec.software_number || undefined,
           confidence: 0,
         });
         if (ols?.model) setVehicleModel((prev) => prev || ols.model);
         if (ols?.make) setVehicleBrand((prev) => prev || brandFromOls(ols.make));
-        setUnsupportedReason(identified ? "disabled" : "not-detected");
+        setUnsupportedReason("not-detected");
         return;
       }
 
@@ -296,6 +342,10 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
   const handleRemoveFile = () => {
     setSelectedFile(null);
     setEcuIdentification(null);
+    setRecognition(null);
+    setSha256(null);
+    setExistingProject(null);
+    currentShaRef.current = null;
     setUnsupportedReason(null);
     setPendingOlsChoice(null);
     setOlsProject(null);
@@ -348,24 +398,6 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
         description: t.errors.noFileSelectedDescription,
       });
       return;
-    }
-
-    // Block if ECU is disabled (a WinOLS project of an unsupported ECU is allowed: its maps come from the project)
-    if (!ecuIdentification?.ols_maps && ecuIdentification?.ecu_type && ecuIdentification.ecu_type !== "Unknown") {
-      try {
-        const statusRes = await fetch(`/api/ecu-status?ecu_type=${encodeURIComponent(ecuIdentification.ecu_type)}`);
-        if (statusRes.ok) {
-          const { enabled } = await statusRes.json();
-          if (!enabled) {
-            toast({
-              title: "ECU Disabled",
-              description: `ECU type "${ecuIdentification.ecu_type}" is currently disabled.`,
-              variant: "destructive",
-            });
-            return;
-          }
-        }
-      } catch {}
     }
 
     if (!projectName.trim()) {
@@ -460,6 +492,12 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
           stage,
           date,
           notes,
+          fuel,
+          vin: vin.trim().toUpperCase(),
+          plate: plate.trim(),
+          tags,
+          sha256: sha256 || undefined,
+          ecuRecognition: recognition || undefined,
         }, { timeout: 120000 }); // 2 minutes timeout for large files
         versioningData = {
           fileId: versioning.data.fileId,
@@ -550,6 +588,12 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
         stage: stage,
         date: date,
         notes: notes,
+        fuel,
+        vin: vin.trim().toUpperCase(),
+        plate: plate.trim(),
+        tags,
+        sha256: sha256 || undefined,
+        ecu_recognition: recognition || undefined,
         created: new Date().toISOString(),
         detectionResults: response.data,
         ecuIdentification: ecuIdentification,
@@ -720,11 +764,20 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
                                 détecteur n'a rien trouvé, mais le projet
                                 WinOLS porte souvent ces numéros. */}
                             <div className="flex items-center justify-between flex-1 gap-6">
-                              <p className={`font-semibold leading-none ${L ? "text-slate-900" : "text-white"}`}>
-                                {olsWithoutMaps
-                                  ? (t.upload?.olsNoMaps || "ECU not supported and no map defined in the WinOLS project.")
-                                  : (t.upload?.ecuNotDetected || "ECU not detected.")}
-                              </p>
+                              <div>
+                                {/* Calculateur reconnu sans détecteur Mamba : on le
+                                    nomme au lieu de parler d'un fichier inconnu */}
+                                {!olsWithoutMaps && recognition?.detected && (
+                                  <p className={`text-xs mb-1 ${L ? "text-amber-700" : "text-amber-300"}`}>{t.library.noDetectorTitle}</p>
+                                )}
+                                <p className={`font-semibold leading-none ${L ? "text-slate-900" : "text-white"}`}>
+                                  {olsWithoutMaps
+                                    ? (t.upload?.olsNoMaps || "ECU not supported and no map defined in the WinOLS project.")
+                                    : recognition?.detected
+                                      ? [recognition.manufacturer, recognition.family].filter(Boolean).join(" ")
+                                      : (t.upload?.ecuNotDetected || "ECU not detected.")}
+                                </p>
+                              </div>
                               <div className="flex items-center gap-6 flex-1 justify-center">
                                 {ecuIdentification.hardware_version && (
                                   <div className={`flex items-center gap-2 text-sm leading-none ${L ? "text-slate-500" : "text-slate-400"}`}>
@@ -741,7 +794,9 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
                               </div>
                             </div>
                             <p className={`mt-2 text-sm ${L ? "text-amber-700" : "text-amber-300"}`}>
-                              {t.upload?.ecuNotDetectedImport || "Mamba does not detect this file yet. You can still create the project, then import a map definition file (.xdf or .json) for this binary."}
+                              {recognition?.detected && !olsWithoutMaps
+                                ? t.library.noDetectorText
+                                : (t.upload?.ecuNotDetectedImport || "Mamba does not detect this file yet. You can still create the project, then import a map definition file (.xdf or .json) for this binary.")}
                             </p>
                           </div>
                         </div>
@@ -800,6 +855,36 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
                   )
                 ) : null}
 
+                {/* Ce binaire est déjà l'original d'un projet de la bibliothèque
+                    (même SHA-256) : proposer de l'ouvrir plutôt qu'un doublon */}
+                {!isAnalyzing && existingProject && (
+                  <div className={`p-3 border rounded-lg ${L ? "bg-amber-500/10 border-amber-500/40" : "bg-amber-500/10 border-amber-500/30"}`}>
+                    <p className={`text-sm ${L ? "text-amber-900" : "text-amber-100"}`}>
+                      {t.library.alreadyInLibrary}{" "}
+                      <span className="font-semibold">{existingProject.project_name || existingProject.original_name}</span>
+                    </p>
+                    <div className="flex items-center gap-3 mt-2 flex-wrap">
+                      {onOpenExisting && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => onOpenExisting(existingProject)}
+                          disabled={isUploading}
+                          className="text-white bg-gradient-to-r from-mamba-700 via-mamba-600 to-venom-600 hover:from-mamba-600 hover:via-mamba-500 hover:to-venom-500"
+                        >
+                          {t.library.openExisting}
+                        </Button>
+                      )}
+                      <span className={`text-sm ${L ? "text-amber-800" : "text-amber-200/80"}`}>{t.library.orCreateCopy}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Carte d'identité de l'ECU lue dans le binaire */}
+                {!isAnalyzing && recognition && !pendingOlsChoice && (
+                  <EcuRecognitionCard recognition={recognition} sha256={sha256 || undefined} light={L} />
+                )}
+
                 {/* Import de projet WinOLS et import de définitions de maps :
                     encore en bêta, on le dit avant de créer le projet. */}
                 {!isAnalyzing && ecuIdentification && betaPath && (
@@ -848,10 +933,7 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
                   disabled={isUploading}
                   options={[
                     { value: "", label: t.upload?.select || "Select..." },
-                    { value: "Audi", label: "Audi" },
-                    { value: "Seat", label: "Seat" },
-                    { value: "Skoda", label: "Skoda" },
-                    { value: "Volkswagen", label: "Volkswagen" },
+                    ...brandOptions(vehicleBrand).map((b) => ({ value: b, label: b })),
                   ]}
                 />
               </div>
@@ -878,8 +960,8 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
                   disabled={isUploading}
                   options={[
                     { value: "", label: t.upload?.select || "Select..." },
-                    // Années des EDC15/EDC16 supportés : 1999 à 2009, la plus récente en tête
-                    ...Array.from({ length: 11 }, (_, i) => 2009 - i).map(y => ({ value: String(y), label: String(y) })),
+                    // Tout calculateur s'ouvre désormais : de l'année en cours à 1990
+                    ...Array.from({ length: new Date().getFullYear() - 1989 }, (_, i) => new Date().getFullYear() - i).map(y => ({ value: String(y), label: String(y) })),
                   ]}
                 />
               </div>
@@ -965,6 +1047,63 @@ export function ProjectCreator({ onProjectCreated }: ProjectCreatorProps) {
                   className={`${inputSmCls} cursor-not-allowed opacity-75`}
                 />
               </div>
+
+              {/* Quatrième ligne : Carburant - VIN - Immatriculation */}
+              <div>
+                <label className={labelCls}>{t.library.fuel}</label>
+                <StyledSelect
+                  value={fuel}
+                  onChange={setFuel}
+                  className="w-full"
+                  disabled={isUploading}
+                  options={[
+                    { value: "", label: t.upload?.select || "Select..." },
+                    { value: "Diesel", label: t.library.fuelDiesel },
+                    { value: "Petrol", label: t.library.fuelPetrol },
+                    { value: "Hybrid", label: t.library.fuelHybrid },
+                    { value: "Electric", label: t.library.fuelElectric },
+                    { value: "LPG/CNG", label: t.library.fuelGas },
+                  ]}
+                />
+              </div>
+
+              <div>
+                <label className={labelCls}>{t.library.vin}</label>
+                <input
+                  type="text"
+                  value={vin}
+                  maxLength={17}
+                  onChange={(e) => setVin(e.target.value.toUpperCase())}
+                  className={`${inputSmCls} font-mono`}
+                  disabled={isUploading}
+                  spellCheck={false}
+                />
+              </div>
+
+              <div>
+                <label className={labelCls}>{t.library.plate}</label>
+                <input
+                  type="text"
+                  value={plate}
+                  onChange={(e) => setPlate(e.target.value)}
+                  className={inputSmCls}
+                  disabled={isUploading}
+                  spellCheck={false}
+                />
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <label className={labelCls}>{t.library.tags}</label>
+              <input
+                type="text"
+                value={tags}
+                onChange={(e) => setTags(e.target.value)}
+                className={inputSmCls}
+                placeholder={t.library.tagsPlaceholder}
+                disabled={isUploading}
+                spellCheck={false}
+              />
             </div>
           </div>
 
