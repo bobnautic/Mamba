@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Mamba",
+  "version": "1.0.0",
+  "identifier": "com.bobnautic.mamba",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:3000",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../out"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Mamba",
+        "width": 1500,
+        "height": 950,
+        "minWidth": 680,
+        "minHeight": 600,
+        "center": true,
+        "decorations": false,
+        "backgroundColor": "#070908",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --overscroll-history-navigation=0 --pull-to-refresh=0"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "bobnautic",
+    "copyright": "Copyright © 2026 Mamba contributors (GPL-3.0)",
+    "homepage": "https://github.com/bobnautic/Mamba",
+    "shortDescription": "Open source automotive ECU tuning editor",
+    "longDescription": "Mamba is a fully local, open source ECU tuning editor: automatic map detection for VAG-group Bosch EDC15/EDC16, WinOLS/TunerPro/JSON map definitions for any other binary, table/2D/3D editing, hexdump, versions and compare, virtual dyno, DTC on/off, checksum correction and WinOLS-compatible mappack export.",
+    "licenseFile": "../LICENSE",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/nsis-header.bmp",
+        "sidebarImage": "icons/nsis-sidebar.bmp",
+        "languages": ["English", "French", "Spanish", "Italian", "German", "Portuguese", "Romanian"],
+        "customLanguageFiles": {
+          "Romanian": "./nsis/Romanian.nsh"
+        },
+        "displayLanguageSelector": true
+      }
+    }
+  }
+}
