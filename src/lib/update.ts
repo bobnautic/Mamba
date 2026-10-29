@@ -1,0 +1,139 @@
+// Update-system frontend helpers.
+//
+// The Rust side (src-tauri/src/update.rs) checks the latest GitHub release
+// and downloads/launches the NSIS installer. This module wraps the IPC
+// calls and keeps the check state in localStorage:
+//  - updateLastCheck       timestamp of the last background check (24h cadence)
+//  - updateSkippedVersion  release tag the user chose to skip
+//  - mambaFirstRunDone  set once the first-run dialog has been completed
+
+import { invoke } from "@tauri-apps/api/core";
+
+export interface UpdateInfo {
+  update_available: boolean;
+  current_version: string;
+  latest_version: string;
+  release_notes: string;
+  download_url: string | null;
+  release_url: string;
+}
+
+const LS_LAST_CHECK = "updateLastCheck";
+const LS_SKIPPED = "updateSkippedVersion";
+const LS_FIRST_RUN = "mambaFirstRunDone";
+// Version proposée mais ni installée ni passée (« La prochaine fois ») :
+// la fenêtre doit être RE-proposée à chaque démarrage de l'app, sans
+// attendre la cadence de 24 h.
+const LS_PENDING = "updatePendingVersion";
+
+export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // once a day
+
+/** Custom event dispatched to open the update dialog (detail: UpdateInfo). */
+export const UPDATE_AVAILABLE_EVENT = "mamba-update-available";
+
+export function isTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+export async function checkForUpdate(): Promise<UpdateInfo> {
+  return invoke<UpdateInfo>("check_for_update");
+}
+
+/** Starts the download; the app quits by itself once the installer runs. */
+export async function downloadAndInstallUpdate(url: string, version: string): Promise<void> {
+  return invoke("download_and_install_update", { url, version });
+}
+
+/** Strings of the update dialog needed to word an install error. */
+export interface UpdateErrorStrings {
+  macMoveToApplications: string;
+  macInstallFailed: string;
+  linuxNotWritable: string;
+  linuxNoPkexec: string;
+  linuxCancelled: string;
+  linuxInstallFailed: string;
+  linuxUnsupported: string;
+}
+
+/**
+ * Error line of the update dialog. The Rust side reports macOS cases with a
+ * `macos:<code>` prefix (running from the disk image, swap refused) so the
+ * dialog can word them in the app language; anything else is shown as is.
+ */
+export function describeUpdateError(raw: string, t: UpdateErrorStrings): string {
+  if (raw.startsWith("macos:not_in_applications")) return t.macMoveToApplications;
+  if (raw.startsWith("macos:install_failed")) {
+    const detail = raw.slice("macos:install_failed".length).replace(/^:\s*/, "").trim();
+    return detail ? `${t.macInstallFailed} (${detail})` : t.macInstallFailed;
+  }
+  // Linux (src-tauri/src/update.rs, module `linux`)
+  if (raw.startsWith("linux:not_writable")) return t.linuxNotWritable;
+  if (raw.startsWith("linux:no_pkexec")) return t.linuxNoPkexec;
+  if (raw.startsWith("linux:cancelled")) return t.linuxCancelled;
+  if (raw.startsWith("linux:unsupported")) return t.linuxUnsupported;
+  if (raw.startsWith("linux:install_failed")) {
+    const detail = raw.slice("linux:install_failed".length).replace(/^:\s*/, "").trim();
+    return detail ? `${t.linuxInstallFailed} (${detail})` : t.linuxInstallFailed;
+  }
+  return raw;
+}
+
+export function markUpdateCheckDone(): void {
+  localStorage.setItem(LS_LAST_CHECK, String(Date.now()));
+}
+
+export function shouldAutoCheck(): boolean {
+  const last = Number(localStorage.getItem(LS_LAST_CHECK) || 0);
+  return Date.now() - last >= CHECK_INTERVAL_MS;
+}
+
+export function getSkippedVersion(): string {
+  return localStorage.getItem(LS_SKIPPED) || "";
+}
+
+export function skipVersion(version: string): void {
+  localStorage.setItem(LS_SKIPPED, version);
+  clearPendingUpdate();
+}
+
+export function getPendingUpdate(): string {
+  return localStorage.getItem(LS_PENDING) || "";
+}
+
+export function clearPendingUpdate(): void {
+  localStorage.removeItem(LS_PENDING);
+}
+
+export function isFirstRun(): boolean {
+  return !localStorage.getItem(LS_FIRST_RUN);
+}
+
+export function markFirstRunDone(): void {
+  localStorage.setItem(LS_FIRST_RUN, "1");
+}
+
+/**
+ * Background check shared by the daily timer and the post-first-run check.
+ * Silent on failure (offline, private repo, no release). Returns the info
+ * when an update is available and not skipped by the user.
+ */
+export async function backgroundUpdateCheck(): Promise<UpdateInfo | null> {
+  if (!isTauri()) return null;
+  try {
+    const info = await checkForUpdate();
+    markUpdateCheckDone();
+    if (info.update_available && info.latest_version !== getSkippedVersion()) {
+      // « La prochaine fois » : mémoriser la version en attente pour que le
+      // prochain DÉMARRAGE re-propose la fenêtre sans attendre 24 h.
+      localStorage.setItem(LS_PENDING, info.latest_version);
+      return info;
+    }
+    // À jour (ou version passée) : plus rien en attente
+    clearPendingUpdate();
+    return null;
+  } catch {
+    // Silent: next attempt in 24h (do NOT mark the check as done so a
+    // temporary network failure retries on the next hourly tick)
+    return null;
+  }
+}
