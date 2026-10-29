@@ -25,7 +25,7 @@ import {
   writeTextFile,
 } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
-import type { FileRecord, MapEdit, Version } from "@/lib/types";
+import type { EcuRecognition, FileRecord, MapEdit, Version } from "@/lib/types";
 
 /** Open a project's folder in the Windows Explorer. */
 export async function openProjectDir(fileId: string): Promise<void> {
@@ -35,6 +35,27 @@ export async function openProjectDir(fileId: string): Promise<void> {
 /** Total size in bytes of the projects folder (every project and version). */
 export async function projectsDirSize(): Promise<number> {
   return invoke<number>("projects_dir_size");
+}
+
+// ── Project archives (.mamba) ─────────────────────────────────────
+// Packing and unpacking live in Rust (src-tauri/src/project_archive.rs):
+// one gzip file holding the whole project folder. Every id is regenerated
+// on import, so the same archive can be imported twice.
+
+/** Save a project as a `.mamba` archive (native "Save as"). False when cancelled. */
+export async function exportProject(fileId: string, defaultName: string): Promise<boolean> {
+  const safe = defaultName.replace(/[\\/:*?"<>|]+/g, "_").trim() || "project";
+  return invoke<boolean>("export_project", { fileId, defaultName: safe });
+}
+
+/** Import a `.mamba` archive (native "Open") as a new project. Null when cancelled. */
+export async function importProject(): Promise<string | null> {
+  return invoke<string | null>("import_project");
+}
+
+/** Copy a project (binary, versions, edits) as a new project. Returns its id. */
+export async function duplicateProject(fileId: string, projectName?: string): Promise<string> {
+  return invoke<string>("duplicate_project", { fileId, projectName: projectName ?? null });
 }
 
 const BASE = { baseDir: BaseDirectory.AppData };
@@ -149,25 +170,54 @@ export async function getFile(fileId: string): Promise<FileRecord | null> {
   }
 }
 
-async function saveFileRecord(record: FileRecord): Promise<void> {
-  record.updated = nowIso();
+async function saveFileRecord(record: FileRecord, touch: boolean = true): Promise<void> {
+  if (touch) record.updated = nowIso();
   await writeTextAtomic(
     `${projectDir(record.id)}/project.json`,
     JSON.stringify(record, null, 2)
   );
 }
 
+/**
+ * `touch: false` leaves the "last modified" date alone: for bookkeeping the
+ * user did not do (fingerprint of an older project), so the library sorted
+ * by modification does not reshuffle on its own.
+ */
 export async function updateFile(
   fileId: string,
-  patch: Partial<FileRecord>
+  patch: Partial<FileRecord>,
+  options: { touch?: boolean } = {}
 ): Promise<FileRecord | null> {
   return serialized(projectFileKey(fileId), async () => {
     const record = await getFile(fileId);
     if (!record) return null;
     Object.assign(record, patch, { id: record.id, created: record.created });
-    await saveFileRecord(record);
+    await saveFileRecord(record, options.touch ?? true);
     return record;
   });
+}
+
+/** The project whose ORIGINAL binary has this SHA-256 (or null). */
+export async function findBySha256(sha256: string): Promise<FileRecord | null> {
+  if (!sha256) return null;
+  const files = await listFiles();
+  return files.find((f) => f.sha256 === sha256) ?? null;
+}
+
+/**
+ * Projects created before the recognition existed have no fingerprint and no
+ * ECU identity: read them once from the stored binary. Returns the updated
+ * record, or the record unchanged when there was nothing to do.
+ */
+export async function ensureFingerprint(file: FileRecord): Promise<FileRecord> {
+  if (file.sha256 && file.ecu_recognition) return file;
+  const { inspectProject } = await import("./detector");
+  const inspection = await inspectProject(file.id);
+  const patch: Partial<FileRecord> = {
+    sha256: inspection.sha256,
+    ecu_recognition: inspection.recognition,
+  };
+  return (await updateFile(file.id, patch, { touch: false })) ?? { ...file, ...patch };
 }
 
 export async function deleteFile(fileId: string): Promise<boolean> {
@@ -210,6 +260,12 @@ export interface CreateProjectInput {
   stage?: string;
   date?: string;
   notes?: string;
+  fuel?: string;
+  vin?: string;
+  plate?: string;
+  tags?: string;
+  sha256?: string;
+  ecuRecognition?: EcuRecognition;
 }
 
 export async function createProject(input: CreateProjectInput): Promise<{
@@ -252,6 +308,12 @@ export async function createProject(input: CreateProjectInput): Promise<{
     stage: input.stage,
     date: input.date,
     notes: input.notes,
+    fuel: input.fuel,
+    vin: input.vin,
+    plate: input.plate,
+    tags: input.tags,
+    sha256: input.sha256,
+    ecu_recognition: input.ecuRecognition,
     created,
     updated: created,
   };

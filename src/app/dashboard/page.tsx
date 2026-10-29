@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { FileRecord } from "@/lib/types";
 import { PROJECT_NAME_MAX_LENGTH } from "@/lib/types";
@@ -30,6 +30,15 @@ import { DashboardBackground, useDashboardWallpaper } from "@/components/dashboa
 import { openExternal, MAMBA_REPO_URL, MAMBA_RELEASES_URL, MAMBA_LICENSE_URL } from "@/lib/open-external";
 import { RoadmapModal } from "@/components/roadmap-modal";
 import { formatBytes } from "@/lib/format-bytes";
+import { EcuRecognitionCard } from "@/components/ecu-recognition-card";
+import {
+  brandOptions,
+  ecuLabelIsRecognised,
+  parseTags,
+  projectEcuGroup,
+  projectEcuLabel,
+  projectSearchText,
+} from "@/lib/project-meta";
 import packageJson from "../../../package.json";
 import {
   Upload,
@@ -47,6 +56,10 @@ import {
   AlertTriangle,
   ClipboardList,
   HardDrive,
+  Copy,
+  Download,
+  FileUp,
+  RotateCcw,
 } from "lucide-react";
 
 type File = FileRecord;
@@ -92,12 +105,15 @@ function ProjectInfoEditModal({
   file,
   onClose,
   onSave,
+  onFileUpdated,
   isClosing = false,
   t,
 }: {
   file: File;
   onClose: () => void;
   onSave: (updatedInfo: Partial<File>) => void;
+  /** Identité de l'ECU relue depuis le binaire du projet */
+  onFileUpdated?: (file: File) => void;
   isClosing?: boolean;
   t: any;
 }) {
@@ -117,7 +133,29 @@ function ProjectInfoEditModal({
   const [customer, setCustomer] = useState(file.customer || "");
   const [stage, setStage] = useState(file.stage || "");
   const [notes, setNotes] = useState(file.notes || "");
+  const [fuel, setFuel] = useState(file.fuel || "");
+  const [vin, setVin] = useState(file.vin || "");
+  const [plate, setPlate] = useState(file.plate || "");
+  const [tags, setTags] = useState(file.tags || "");
   const date = file.date || new Date(file.created).toISOString().split('T')[0];
+
+  // Identité de l'ECU (reconnaissance universelle), relisible à la demande
+  const [recognition, setRecognition] = useState(file.ecu_recognition);
+  const [sha256, setSha256] = useState(file.sha256);
+  const [rereading, setRereading] = useState(false);
+  const rereadRecognition = async () => {
+    setRereading(true);
+    try {
+      const updated = await store.ensureFingerprint({ ...file, ecu_recognition: undefined });
+      setRecognition(updated.ecu_recognition);
+      setSha256(updated.sha256);
+      onFileUpdated?.(updated);
+    } catch {
+      // binaire illisible : l'identité affichée reste la précédente
+    } finally {
+      setRereading(false);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,10 +170,14 @@ function ProjectInfoEditModal({
       customer: customer,
       stage: stage,
       notes: notes,
+      fuel,
+      vin: vin.trim().toUpperCase(),
+      plate: plate.trim(),
+      tags,
     });
   };
 
-  const brands = ["Audi", "Seat", "Skoda", "Volkswagen"];
+  const brands = brandOptions(vehicleBrand);
   const stages = ["Stage 1", "Stage 2", "Stage 3"];
   const transmissions = ["Automatic", "Manual"];
   const years = Array.from({ length: new Date().getFullYear() - 1996 }, (_, i) => new Date().getFullYear() - i);
@@ -213,13 +255,25 @@ function ProjectInfoEditModal({
                         </div>
                       </div>
                     </div>
-                    {file.ecu_type && (
+                    {projectEcuLabel({ ...file, ecu_recognition: recognition }) && (
                       <span className={`text-xs px-2 py-0.5 rounded-full text-white ${L ? "bg-gradient-to-r from-mamba-700 via-mamba-600 to-venom-600 border border-mamba-700/50" : "bg-gradient-to-r from-mamba-700/50 via-mamba-600/50 to-venom-600/50 border border-mamba-600/40"}`}>
-                        {file.ecu_type}
+                        {projectEcuLabel({ ...file, ecu_recognition: recognition })}
                       </span>
                     )}
                   </div>
                 </div>
+                {/* Carte d'identité de l'ECU lue dans le binaire */}
+                {recognition && (
+                  <div className="mt-3">
+                    <EcuRecognitionCard
+                      recognition={recognition}
+                      sha256={sha256}
+                      light={L}
+                      onReread={rereadRecognition}
+                      rereading={rereading}
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Project Name */}
@@ -357,6 +411,60 @@ function ProjectInfoEditModal({
                       className={`${inputSmCls} cursor-not-allowed opacity-75`}
                     />
                   </div>
+
+                  {/* Quatrième ligne : Carburant - VIN - Immatriculation */}
+                  <div>
+                    <label className={labelCls}>{t.library.fuel}</label>
+                    <StyledSelect
+                      appearance="auto"
+                      value={fuel}
+                      onChange={setFuel}
+                      className="w-full"
+                      options={[
+                        { value: "", label: t.projectInfo.select },
+                        { value: "Diesel", label: t.library.fuelDiesel },
+                        { value: "Petrol", label: t.library.fuelPetrol },
+                        { value: "Hybrid", label: t.library.fuelHybrid },
+                        { value: "Electric", label: t.library.fuelElectric },
+                        { value: "LPG/CNG", label: t.library.fuelGas },
+                      ]}
+                    />
+                  </div>
+
+                  <div>
+                    <label className={labelCls}>{t.library.vin}</label>
+                    <input
+                      type="text"
+                      value={vin}
+                      maxLength={17}
+                      onChange={(e) => setVin(e.target.value.toUpperCase())}
+                      className={`${inputSmCls} font-mono`}
+                      spellCheck={false}
+                    />
+                  </div>
+
+                  <div>
+                    <label className={labelCls}>{t.library.plate}</label>
+                    <input
+                      type="text"
+                      value={plate}
+                      onChange={(e) => setPlate(e.target.value)}
+                      className={inputSmCls}
+                      spellCheck={false}
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-3">
+                  <label className={labelCls}>{t.library.tags}</label>
+                  <input
+                    type="text"
+                    value={tags}
+                    onChange={(e) => setTags(e.target.value)}
+                    className={inputSmCls}
+                    placeholder={t.library.tagsPlaceholder}
+                    spellCheck={false}
+                  />
                 </div>
               </div>
 
@@ -397,6 +505,17 @@ function ProjectInfoEditModal({
     </div>
   );
 }
+
+/** Vue de la bibliothèque : tri et filtres (valeur vide = tous). */
+type LibrarySort = "newest" | "oldest" | "modified" | "name" | "ecu";
+interface LibraryView {
+  sort: LibrarySort;
+  ecu: string;
+  brand: string;
+  stage: string;
+  fuel: string;
+}
+const DEFAULT_LIBRARY_VIEW: LibraryView = { sort: "newest", ecu: "", brand: "", stage: "", fuel: "" };
 
 // Le dashboard suit le même système de thèmes que l'éditeur (défaut / clair /
 // OLED) — le provider vit ici, le contenu consomme useTheme.
@@ -506,6 +625,29 @@ function DashboardContent() {
   };
   const [currentPage, setCurrentPage] = useState(1);
   const [pageTransition, setPageTransition] = useState(false);
+  // Filtres et tri de la bibliothèque : gardés tant que l'app est ouverte,
+  // comme le nombre de projets par page
+  const [library, setLibraryState] = useState<LibraryView>(() => {
+    if (typeof window === "undefined") return DEFAULT_LIBRARY_VIEW;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem("mamba-dashboard-library") || "{}");
+      return { ...DEFAULT_LIBRARY_VIEW, ...saved };
+    } catch {
+      return DEFAULT_LIBRARY_VIEW;
+    }
+  });
+  const setLibrary = (patch: Partial<LibraryView>) => {
+    setLibraryState((prev) => {
+      const next = { ...prev, ...patch };
+      try {
+        sessionStorage.setItem("mamba-dashboard-library", JSON.stringify(next));
+      } catch {
+        // stockage indisponible : on garde seulement l'état en mémoire
+      }
+      return next;
+    });
+  };
+  const filtersActive = !!(library.ecu || library.brand || library.stage || library.fuel);
   // Poids total du dossier projets (tous projets, toutes versions)
   const [projectsSize, setProjectsSize] = useState<number | null>(null);
   const [versionCounts, setVersionCounts] = useState<Record<string, number>>({});
@@ -571,12 +713,36 @@ function DashboardContent() {
     }, 200);
   };
 
+  // Projets d'avant la reconnaissance universelle : empreinte SHA-256 et
+  // identité de l'ECU lues une fois depuis leur binaire, en arrière-plan, un
+  // projet après l'autre
+  const backfillRunning = useRef(false);
+  const backfillFingerprints = async (list: File[]) => {
+    if (backfillRunning.current) return;
+    const missing = list.filter((f) => !f.sha256 || !f.ecu_recognition);
+    if (missing.length === 0) return;
+    backfillRunning.current = true;
+    try {
+      for (const f of missing) {
+        try {
+          const updated = await store.ensureFingerprint(f);
+          setFiles((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+        } catch {
+          // binaire illisible : le projet reste tel quel
+        }
+      }
+    } finally {
+      backfillRunning.current = false;
+    }
+  };
+
   const loadDashboardData = async () => {
     try {
       // Read all projects from the local store (app data directory)
       const filesData = await store.listFiles();
       setFiles(filesData);
       store.projectsDirSize().then(setProjectsSize).catch(() => setProjectsSize(null));
+      void backfillFingerprints(filesData);
 
       // Get version counts for each file
       const counts: Record<string, number> = {};
@@ -659,6 +825,7 @@ function DashboardContent() {
         software_version: file.software_version,
         maps_source: file.maps_source,
         byte_order: file.byte_order,
+        ecu_recognition: file.ecu_recognition,
         created: file.created,
         detectionResults: detectionResults,
         fileId: file.id,
@@ -724,25 +891,86 @@ function DashboardContent() {
     }
   };
 
-  // Filter files based on search query
-  const filteredFiles = files.filter((file) => {
-    if (!searchQuery.trim()) return true;
+  const actionFailed = (error: unknown) => {
+    const detail = (error as { message?: string })?.message || String(error ?? "");
+    toast({ title: t.library.actionFailed, description: detail, variant: "destructive" });
+  };
 
-    const query = searchQuery.toLowerCase();
-    return (
-      file.project_name?.toLowerCase().includes(query) ||
-      file.original_name?.toLowerCase().includes(query) ||
-      file.hardware_version?.toLowerCase().includes(query) ||
-      file.software_version?.toLowerCase().includes(query) ||
-      file.ecu_type?.toLowerCase().includes(query) ||
-      file.vehicle_brand?.toLowerCase().includes(query) ||
-      file.vehicle_model?.toLowerCase().includes(query) ||
-      file.engine_type?.toLowerCase().includes(query) ||
-      file.customer?.toLowerCase().includes(query) ||
-      file.stage?.toLowerCase().includes(query) ||
-      file.year?.toLowerCase().includes(query)
-    );
-  });
+  // Copie complète (binaire, versions, modifications) sous un nouveau nom
+  const handleDuplicateProject = async (file: File) => {
+    try {
+      const name = `${file.project_name || file.original_name} (${t.library.copySuffix})`.slice(0, PROJECT_NAME_MAX_LENGTH);
+      await store.duplicateProject(file.id, name);
+      toast({ title: t.library.projectDuplicated, description: t.library.projectDuplicatedDescription });
+      await loadDashboardData();
+    } catch (error) {
+      actionFailed(error);
+    }
+  };
+
+  // Archive .mamba : sauvegarde, transfert vers un autre poste
+  const handleExportProject = async (file: File) => {
+    try {
+      const saved = await store.exportProject(file.id, file.project_name || file.original_name || "project");
+      if (saved) {
+        toast({ title: t.library.projectExported, description: t.library.projectExportedDescription });
+      }
+    } catch (error) {
+      actionFailed(error);
+    }
+  };
+
+  const handleImportProject = async () => {
+    try {
+      const id = await store.importProject();
+      if (!id) return;
+      toast({ title: t.library.projectImported, description: t.library.projectImportedDescription });
+      await loadDashboardData();
+    } catch (error) {
+      actionFailed(error);
+    }
+  };
+
+  // Projets dont l'original est le même binaire (même SHA-256)
+  const shaCounts = new Map<string, number>();
+  for (const f of files) {
+    if (f.sha256) shaCounts.set(f.sha256, (shaCounts.get(f.sha256) || 0) + 1);
+  }
+
+  // Valeurs proposées par les filtres : celles présentes dans la bibliothèque
+  const distinct = (values: (string | null | undefined)[]) =>
+    Array.from(new Set(values.filter((v): v is string => !!v))).sort((a, b) => a.localeCompare(b));
+  const ecuGroups = distinct(files.map(projectEcuGroup));
+  const brandValues = distinct(files.map((f) => f.vehicle_brand));
+  const stageValues = distinct(files.map((f) => f.stage));
+  const fuelValues = distinct(files.map((f) => f.fuel));
+  const fuelLabel = (v: string) =>
+    ({ Diesel: t.library.fuelDiesel, Petrol: t.library.fuelPetrol, Hybrid: t.library.fuelHybrid, Electric: t.library.fuelElectric, "LPG/CNG": t.library.fuelGas } as Record<string, string>)[v] || v;
+
+  // Recherche dans tous les champs (VIN, immatriculation, étiquettes, numéros
+  // lus dans le binaire…), puis filtres et tri
+  const query = searchQuery.trim().toLowerCase();
+  const nameOf = (f: File) => f.project_name || f.original_name || "";
+  const filteredFiles = files
+    .filter((file) => !query || projectSearchText(file).includes(query))
+    .filter((file) => !library.ecu || projectEcuGroup(file) === library.ecu)
+    .filter((file) => !library.brand || file.vehicle_brand === library.brand)
+    .filter((file) => !library.stage || file.stage === library.stage)
+    .filter((file) => !library.fuel || file.fuel === library.fuel)
+    .sort((a, b) => {
+      switch (library.sort) {
+        case "oldest":
+          return a.created.localeCompare(b.created);
+        case "modified":
+          return (b.updated || b.created).localeCompare(a.updated || a.created);
+        case "name":
+          return nameOf(a).localeCompare(nameOf(b), undefined, { sensitivity: "base", numeric: true });
+        case "ecu":
+          return (projectEcuLabel(a) || "\uffff").localeCompare(projectEcuLabel(b) || "\uffff") || b.created.localeCompare(a.created);
+        default:
+          return b.created.localeCompare(a.created);
+      }
+    });
 
   // Calculate pagination
   const totalPages = Math.ceil(filteredFiles.length / itemsPerPage);
@@ -750,10 +978,10 @@ function DashboardContent() {
   const endIndex = startIndex + itemsPerPage;
   const paginatedFiles = filteredFiles.slice(startIndex, endIndex);
 
-  // Reset to page 1 when search query or items per page changes
+  // Reset to page 1 when search query, filters or items per page change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, itemsPerPage]);
+  }, [searchQuery, itemsPerPage, library]);
 
   // Handle page change with animation
   const handlePageChange = (newPage: number) => {
@@ -783,6 +1011,10 @@ function DashboardContent() {
         customer: updatedInfo.customer,
         stage: updatedInfo.stage,
         notes: updatedInfo.notes,
+        fuel: updatedInfo.fuel,
+        vin: updatedInfo.vin,
+        plate: updatedInfo.plate,
+        tags: updatedInfo.tags,
       });
 
       toast({
@@ -949,15 +1181,106 @@ function DashboardContent() {
               />
             </div>
 
-            <Button
-              onClick={handleUploadClick}
-              className="sm:justify-self-end bg-gradient-to-r from-mamba-700 via-mamba-600 to-venom-600 hover:from-mamba-600 hover:via-mamba-500 hover:to-venom-500 text-white shadow-lg shadow-mamba-500/25 group"
-            >
-              <Upload className="w-4 h-4 mr-2" />
-              <span>{t.dashboard.upload}</span>
-              <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
-            </Button>
+            <div className="flex items-center gap-2 sm:justify-self-end">
+              {/* Import d'une archive de projet .mamba */}
+              <Button
+                variant="ghost"
+                onClick={handleImportProject}
+                title={t.library.importProjectTitle}
+                className={`border ${isLight ? 'border-black/15 bg-white/70 text-slate-800 hover:bg-white hover:text-black' : onCustomDark ? 'border-white/20 bg-[#0a0d0c]/45 text-white hover:bg-[#0a0d0c]/60' : 'border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.08] hover:text-white'}`}
+              >
+                <FileUp className="w-4 h-4 mr-2" />
+                <span>{t.library.importProject}</span>
+              </Button>
+              <Button
+                onClick={handleUploadClick}
+                className="bg-gradient-to-r from-mamba-700 via-mamba-600 to-venom-600 hover:from-mamba-600 hover:via-mamba-500 hover:to-venom-500 text-white shadow-lg shadow-mamba-500/25 group"
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                <span>{t.dashboard.upload}</span>
+                <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
+              </Button>
+            </div>
           </div>
+
+          {/* Filtres et tri de la bibliothèque */}
+          {files.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap mt-3">
+              {ecuGroups.length > 0 && (
+                <StyledSelect
+                  appearance="auto"
+                  value={library.ecu}
+                  onChange={(v) => setLibrary({ ecu: v })}
+                  minWidth={150}
+                  options={[
+                    { value: "", label: `${t.library.filterEcu}: ${t.library.all}` },
+                    ...ecuGroups.map((v) => ({ value: v, label: `${t.library.filterEcu}: ${v}` })),
+                  ]}
+                />
+              )}
+              {brandValues.length > 0 && (
+                <StyledSelect
+                  appearance="auto"
+                  value={library.brand}
+                  onChange={(v) => setLibrary({ brand: v })}
+                  minWidth={150}
+                  options={[
+                    { value: "", label: `${t.library.filterBrand}: ${t.library.all}` },
+                    ...brandValues.map((v) => ({ value: v, label: `${t.library.filterBrand}: ${v}` })),
+                  ]}
+                />
+              )}
+              {stageValues.length > 0 && (
+                <StyledSelect
+                  appearance="auto"
+                  value={library.stage}
+                  onChange={(v) => setLibrary({ stage: v })}
+                  minWidth={130}
+                  options={[
+                    { value: "", label: `${t.library.filterStage}: ${t.library.all}` },
+                    ...stageValues.map((v) => ({ value: v, label: `${t.library.filterStage}: ${v}` })),
+                  ]}
+                />
+              )}
+              {fuelValues.length > 0 && (
+                <StyledSelect
+                  appearance="auto"
+                  value={library.fuel}
+                  onChange={(v) => setLibrary({ fuel: v })}
+                  minWidth={140}
+                  options={[
+                    { value: "", label: `${t.library.filterFuel}: ${t.library.all}` },
+                    ...fuelValues.map((v) => ({ value: v, label: `${t.library.filterFuel}: ${fuelLabel(v)}` })),
+                  ]}
+                />
+              )}
+              {filtersActive && (
+                <button
+                  type="button"
+                  onClick={() => setLibrary({ ecu: "", brand: "", stage: "", fuel: "" })}
+                  className={`inline-flex items-center gap-1 h-8 px-2 rounded-md text-xs transition-colors ${isLight ? 'text-slate-700 hover:text-black hover:bg-black/10' : 'text-slate-300 hover:text-white hover:bg-white/10'}`}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  {t.library.clearFilters}
+                </button>
+              )}
+              <div className="ml-auto">
+                <StyledSelect
+                  appearance="auto"
+                  value={library.sort}
+                  onChange={(v) => setLibrary({ sort: v as LibrarySort })}
+                  minWidth={190}
+                  options={[
+                    { value: "newest", label: `${t.library.sortBy}: ${t.library.sortNewest}` },
+                    { value: "oldest", label: `${t.library.sortBy}: ${t.library.sortOldest}` },
+                    { value: "modified", label: `${t.library.sortBy}: ${t.library.sortModified}` },
+                    { value: "name", label: `${t.library.sortBy}: ${t.library.sortName}` },
+                    { value: "ecu", label: `${t.library.sortBy}: ${t.library.sortEcu}` },
+                  ]}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -979,7 +1302,19 @@ function DashboardContent() {
                 <Search className="w-10 h-10 text-slate-600" />
               </div>
               <h4 className="text-lg font-semibold text-slate-300 mb-2">{t.dashboard.noResults}</h4>
-              <p className="text-slate-500">{t.dashboard.noMatchingFiles} "{searchQuery}"</p>
+              <p className="text-slate-500">
+                {searchQuery.trim() ? <>{t.dashboard.noMatchingFiles} &quot;{searchQuery}&quot;</> : null}
+              </p>
+              {filtersActive && (
+                <button
+                  type="button"
+                  onClick={() => setLibrary({ ecu: "", brand: "", stage: "", fuel: "" })}
+                  className="mt-3 inline-flex items-center gap-1 text-sm text-slate-400 hover:text-white"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  {t.library.clearFilters}
+                </button>
+              )}
             </div>
           ) : (
             <>
@@ -1019,10 +1354,20 @@ function DashboardContent() {
                                 {file.customer}
                               </span>
                             )}
-                            {file.ecu_type && (
-                              <span className={`text-xs px-2 py-0.5 rounded-full text-white ${isLight ? "bg-gradient-to-r from-mamba-700 via-mamba-600 to-venom-600 border border-mamba-700/50" : "bg-gradient-to-r from-mamba-700/50 via-mamba-600/50 to-venom-600/50 border border-mamba-600/40"}`}>
-                                {file.ecu_type}
-                              </span>
+                            {projectEcuLabel(file) && (
+                              ecuLabelIsRecognised(file) ? (
+                                // Identifié par la reconnaissance, sans détecteur Mamba : contour seul
+                                <span
+                                  title={t.library.recognisedTitle}
+                                  className={`text-xs px-2 py-0.5 rounded-full border ${isLight ? "border-mamba-700/50 text-mamba-800" : "border-mamba-500/50 text-mamba-200"}`}
+                                >
+                                  {projectEcuLabel(file)}
+                                </span>
+                              ) : (
+                                <span className={`text-xs px-2 py-0.5 rounded-full text-white ${isLight ? "bg-gradient-to-r from-mamba-700 via-mamba-600 to-venom-600 border border-mamba-700/50" : "bg-gradient-to-r from-mamba-700/50 via-mamba-600/50 to-venom-600/50 border border-mamba-600/40"}`}>
+                                  {projectEcuLabel(file)}
+                                </span>
+                              )
                             )}
                             {file.vehicle_brand && (
                               <span className={`text-xs ${subText ?? 'text-slate-400'}`}>
@@ -1044,6 +1389,19 @@ function DashboardContent() {
                                 SW: {file.software_version}
                               </span>
                             )}
+                            {file.plate && (
+                              <span className={`text-xs font-mono px-1.5 rounded border ${isLight ? 'border-black/15 text-slate-700' : 'border-white/15 text-slate-300'}`}>
+                                {file.plate}
+                              </span>
+                            )}
+                            {parseTags(file.tags).slice(0, 3).map((tag) => (
+                              <span
+                                key={tag}
+                                className={`text-xs px-1.5 rounded ${isLight ? 'bg-black/[0.06] text-slate-700' : 'bg-white/[0.07] text-slate-300'}`}
+                              >
+                                #{tag}
+                              </span>
+                            ))}
                           </div>
                         </div>
                       </div>
@@ -1051,6 +1409,14 @@ function DashboardContent() {
                       {/* Bloc de droite jamais compressé ni replié : c'est le nom
                           du projet (tronqué) qui absorbe le manque de place */}
                       <div className="flex items-center gap-2 flex-shrink-0 whitespace-nowrap">
+                        {file.sha256 && (shaCounts.get(file.sha256) || 0) > 1 && (
+                          <div
+                            title={t.library.duplicateBadgeTitle}
+                            className={`px-2.5 py-0.5 rounded-full border text-xs ${isLight ? 'border-amber-500/40 bg-amber-500/10 text-amber-800' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'}`}
+                          >
+                            {t.library.duplicateBadge}
+                          </div>
+                        )}
                         <div className={`px-2.5 py-0.5 rounded-full border ${isLight ? 'border-black/[0.10] bg-black/[0.05]' : 'border-white/[0.08] bg-white/[0.05]'}`}>
                           <span className={`text-xs tabular-nums ${subText ?? (isLight ? 'text-slate-500' : 'text-slate-400')}`}>
                             {t.dashboard.versions} : <span className={subText ?? (isLight ? 'text-slate-900' : 'text-slate-200')}>{versionCounts[file.id] || 1}</span>
@@ -1079,6 +1445,28 @@ function DashboardContent() {
                             }}
                           >
                             <Gauge className="w-4 h-4" />
+                          </button>
+                          <div className={`w-px h-4 ${isLight ? 'bg-black/[0.12]' : 'bg-white/[0.08]'}`} />
+                          <button
+                            className={`h-7 w-9 flex items-center justify-center transition-colors ${isLight ? (onCustomLight ? 'text-slate-900 hover:text-black hover:bg-black/10' : 'text-slate-500 hover:text-black hover:bg-black/10') : darkIcon}`}
+                            title={t.library.duplicateProject}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDuplicateProject(file);
+                            }}
+                          >
+                            <Copy className="w-4 h-4" />
+                          </button>
+                          <div className={`w-px h-4 ${isLight ? 'bg-black/[0.12]' : 'bg-white/[0.08]'}`} />
+                          <button
+                            className={`h-7 w-9 flex items-center justify-center transition-colors ${isLight ? (onCustomLight ? 'text-slate-900 hover:text-black hover:bg-black/10' : 'text-slate-500 hover:text-black hover:bg-black/10') : darkIcon}`}
+                            title={t.library.exportProject}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleExportProject(file);
+                            }}
+                          >
+                            <Download className="w-4 h-4" />
                           </button>
                           <div className={`w-px h-4 ${isLight ? 'bg-black/[0.12]' : 'bg-white/[0.08]'}`} />
                           <button
@@ -1213,6 +1601,11 @@ function DashboardContent() {
                 handleCloseUploadModal();
                 loadDashboardData(); // Recharger la liste des fichiers
               }}
+              onOpenExisting={(existing) => {
+                // Même binaire déjà dans la bibliothèque : on ouvre ce projet
+                handleCloseUploadModal();
+                void handleOpenProject(existing);
+              }}
             />
           </div>
         </div>
@@ -1224,6 +1617,7 @@ function DashboardContent() {
           file={selectedFileInfo}
           onClose={handleCloseProjectInfo}
           onSave={handleSaveProjectInfo}
+          onFileUpdated={(updated) => setFiles((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))}
           isClosing={isClosingProjectInfo}
           t={t}
         />

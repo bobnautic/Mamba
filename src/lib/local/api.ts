@@ -113,6 +113,12 @@ export async function handleLocalApi(
         stage: b.stage,
         date: b.date,
         notes: b.notes,
+        fuel: b.fuel,
+        vin: b.vin,
+        plate: b.plate,
+        tags: b.tags,
+        sha256: b.sha256,
+        ecuRecognition: b.ecuRecognition,
       });
 
       return ok({
@@ -150,6 +156,12 @@ export async function handleLocalApi(
         stage: fileRecord.stage,
         date: fileRecord.date,
         notes: fileRecord.notes,
+        fuel: fileRecord.fuel,
+        vin: fileRecord.vin,
+        plate: fileRecord.plate,
+        tags: fileRecord.tags,
+        sha256: fileRecord.sha256,
+        ecu_recognition: fileRecord.ecu_recognition,
         detection_data: fileRecord.detection_data,
         maps_source: fileRecord.maps_source,
         byte_order: fileRecord.byte_order,
@@ -249,6 +261,10 @@ export async function handleLocalApi(
         "customer",
         "stage",
         "notes",
+        "fuel",
+        "vin",
+        "plate",
+        "tags",
         "detection_data",
         "map_sort_mode",
       ];

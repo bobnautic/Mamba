@@ -6,7 +6,8 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
-use crate::detector::{ECUIdentifier, MapDetector};
+use crate::detector::ecu_identifier::ECUIdentification;
+use crate::detector::{ECUIdentifier, EcuRecognition, MapDetector};
 use crate::models::{DetectMapsResponse, DetectedMap, ExpectedMapStatus};
 
 fn decode_base64(data: &str) -> Result<Vec<u8>, String> {
@@ -45,15 +46,136 @@ pub fn identify_ecu(
         ecu_id.confidence * 100.0
     );
 
-    Ok(IdentifyEcuResponse {
+    Ok(identification_response(&ecu_id))
+}
+
+fn identification_response(ecu_id: &ECUIdentification) -> IdentifyEcuResponse {
+    IdentifyEcuResponse {
         manufacturer: ecu_id.manufacturer.display_name().to_string(),
         ecu_type: format!("{:?}", ecu_id.ecu_type),
-        variant: ecu_id.variant,
-        software_version: ecu_id.software_version,
-        hardware_version: ecu_id.hardware_version,
-        part_number: ecu_id.part_number,
+        variant: ecu_id.variant.clone(),
+        software_version: ecu_id.software_version.clone(),
+        hardware_version: ecu_id.hardware_version.clone(),
+        part_number: ecu_id.part_number.clone(),
         confidence: ecu_id.confidence,
-    })
+    }
+}
+
+/// Everything readable from a binary before it becomes a project: size,
+/// SHA-256 (matches it against the library), the strict identification that
+/// routes the map detector, and the universal recognition of the ECU.
+#[derive(Debug, Serialize)]
+pub struct InspectBinaryResponse {
+    pub size: usize,
+    pub sha256: String,
+    pub identification: IdentifyEcuResponse,
+    pub recognition: EcuRecognition,
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(data).iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn inspect_bytes(data: &[u8]) -> InspectBinaryResponse {
+    let ecu_id = ECUIdentifier::identify(data);
+    let recognition = crate::detector::ecu_recognition::recognize_with(data, &ecu_id);
+    InspectBinaryResponse {
+        size: data.len(),
+        sha256: sha256_hex(data),
+        identification: identification_response(&ecu_id),
+        recognition,
+    }
+}
+
+/// Pre-flight of the New Project screen (StageX-style inspect): reads the
+/// identity of the ECU from the bytes, whatever its manufacturer.
+#[tauri::command]
+pub fn inspect_binary(file_data_base64: String, file_name: String) -> Result<InspectBinaryResponse, String> {
+    let data = decode_base64(&file_data_base64)?;
+    let result = inspect_bytes(&data);
+    log::warn!(
+        "🔎 [INSPECT] {} ({} bytes) -> {} {} ({:.0}%), detector: {}",
+        file_name,
+        data.len(),
+        result.recognition.manufacturer.as_deref().unwrap_or("?"),
+        result.recognition.family.as_deref().unwrap_or("?"),
+        result.recognition.confidence * 100.0,
+        result.recognition.mamba_ecu_type.as_deref().unwrap_or("none"),
+    );
+    Ok(result)
+}
+
+fn projects_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("projects"))
+}
+
+fn project_dir(app: &tauri::AppHandle, file_id: &str) -> Result<std::path::PathBuf, String> {
+    // A crafted id must never escape the projects directory
+    if !crate::project_archive::is_valid_project_id(file_id) {
+        return Err("Invalid project id".to_string());
+    }
+    Ok(projects_dir(app)?.join(file_id))
+}
+
+/// Same as `inspect_binary` for the original binary of a project already in
+/// the library (fills in the fingerprint and recognition of older projects).
+#[tauri::command]
+pub fn inspect_project(app: tauri::AppHandle, file_id: String) -> Result<InspectBinaryResponse, String> {
+    let path = project_dir(&app, &file_id)?.join("original.bin");
+    let data = std::fs::read(&path).map_err(|e| format!("Cannot read the project binary: {}", e))?;
+    Ok(inspect_bytes(&data))
+}
+
+/// Export a project as a `.mamba` archive through the native "Save as"
+/// dialog. Returns false when the user cancels.
+#[tauri::command]
+pub async fn export_project(app: tauri::AppHandle, file_id: String, default_name: String) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let archive = crate::project_archive::pack_project(&project_dir(&app, &file_id)?)?;
+    let ext = crate::project_archive::EXTENSION;
+    let picked = app
+        .dialog()
+        .file()
+        .set_file_name(format!("{}.{}", default_name, ext))
+        .add_filter(format!("Mamba project (*.{})", ext), &[ext])
+        .blocking_save_file();
+    let Some(file_path) = picked else { return Ok(false) };
+    let mut path = file_path.into_path().map_err(|e| format!("Invalid path: {}", e))?;
+    if !path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(ext)) {
+        let mut s = path.into_os_string();
+        s.push(format!(".{}", ext));
+        path = std::path::PathBuf::from(s);
+    }
+    std::fs::write(&path, archive).map_err(|e| format!("Write failed: {}", e))?;
+    Ok(true)
+}
+
+/// Import a `.mamba` archive picked in the native "Open" dialog as a new
+/// project. Returns its id, or None when the user cancels.
+#[tauri::command]
+pub async fn import_project(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let ext = crate::project_archive::EXTENSION;
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter(format!("Mamba project (*.{})", ext), &[ext])
+        .blocking_pick_file();
+    let Some(file_path) = picked else { return Ok(None) };
+    let path = file_path.into_path().map_err(|e| format!("Invalid path: {}", e))?;
+    let archive = std::fs::read(&path).map_err(|e| format!("Cannot read the file: {}", e))?;
+    let id = crate::project_archive::unpack_project(&projects_dir(&app)?, &archive, None)?;
+    Ok(Some(id))
+}
+
+/// Copy a project of the library (binary, versions, edits) as a new project.
+#[tauri::command]
+pub fn duplicate_project(app: tauri::AppHandle, file_id: String, project_name: Option<String>) -> Result<String, String> {
+    crate::project_archive::duplicate_project(&projects_dir(&app)?, &file_id, project_name.as_deref())
 }
 
 /// Inspects a file to see if it is a `.ols` WinOLS project container (as opposed to a raw ECU

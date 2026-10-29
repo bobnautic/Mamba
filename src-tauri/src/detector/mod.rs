@@ -2,11 +2,13 @@ use crate::models::DetectedMap;
 
 // Detection modules
 pub mod ecu_identifier;
+pub mod ecu_recognition;
 pub mod smart_detector;
 pub mod ecu;
 
 // Public exports
 pub use ecu_identifier::{ECUIdentifier, ECUType};
+pub use ecu_recognition::{recognize, EcuRecognition};
 pub use smart_detector::SmartDetector;
 
 /// Main map detection engine with intelligent ECU identification

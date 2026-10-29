@@ -59,7 +59,9 @@ import { isMacOS } from "@/lib/platform";
 import { PowerEstimateModal } from "@/components/power-estimate-modal";
 import { EoiModal } from "@/components/eoi-modal";
 import { hasEoiMaps } from "@/lib/ecu/bosch/eoi-calculation";
-import type { FileRecord } from "@/lib/types";
+import type { EcuRecognition, FileRecord } from "@/lib/types";
+import { brandOptions, projectEcuLabel } from "@/lib/project-meta";
+import { EcuRecognitionCard } from "@/components/ecu-recognition-card";
 import { PROJECT_NAME_MAX_LENGTH } from "@/lib/types";
 import { SolutionsModal } from "@/components/solutions-modal";
 import { getSolutionImplementation, getSolutionsForECU, isLaunchControlActive } from "@/lib/ecu/solutions";
@@ -88,7 +90,7 @@ import { PromptModal } from "@/components/prompt-modal";
 import { correctChecksumByEcuType, isChecksumSupported, ChecksumResult } from "@/lib/ecu/bosch/checksums";
 import { disableDTC, enableDTC, detectDTCs, type DetectedDTC, type CodeblockInfo } from "@/lib/ecu/bosch/dtc";
 import { saveBytesToFile } from "@/lib/local/save-file";
-import { identifyEcu, bytesToBase64, detectorVersion, detectMaps, inspectOlsContainer, extractOlsVersion } from "@/lib/local/detector";
+import { identifyEcu, bytesToBase64, detectorVersion, detectMaps, inspectOlsContainer, extractOlsVersion, SUPPORTED_ECUS } from "@/lib/local/detector";
 import * as localStore from "@/lib/local/store";
 import { ThemeProvider, useTheme } from "@/contexts/theme-context";
 import { useSettings } from "@/contexts/settings-context";
@@ -182,6 +184,8 @@ interface ProjectData {
   maps_source?: "detector" | "ols" | "both" | "imported";
   /** Ordre des octets déclaré par le projet WinOLS */
   byte_order?: "hilo" | "lohi";
+  /** Identité de l'ECU lue dans le binaire (reconnaissance universelle) */
+  ecu_recognition?: EcuRecognition;
   created?: string;
   detectionResults: {
     maps: MapData[];
@@ -921,7 +925,7 @@ function ProjectInfoEditModal({
     });
   };
 
-  const brands = ["Audi", "Seat", "Skoda", "Volkswagen"];
+  const brands = brandOptions(vehicleBrand);
   const stages = ["Stage 1", "Stage 2", "Stage 3"];
   const transmissions = ["Automatic", "Manual"];
   const years = Array.from({ length: new Date().getFullYear() - 1996 }, (_, i) => new Date().getFullYear() - i);
@@ -999,13 +1003,19 @@ function ProjectInfoEditModal({
                         </div>
                       </div>
                     </div>
-                    {projectData.ecu_type && (
+                    {projectEcuLabel(projectData) && (
                       <span className={`text-xs px-2 py-0.5 rounded-full text-white ${L ? "bg-gradient-to-r from-mamba-700 via-mamba-600 to-venom-600 border border-mamba-700/50" : "bg-gradient-to-r from-mamba-700/50 via-mamba-600/50 to-venom-600/50 border border-mamba-600/40"}`}>
-                        {projectData.ecu_type}
+                        {projectEcuLabel(projectData)}
                       </span>
                     )}
                   </div>
                 </div>
+                {/* Carte d'identité de l'ECU lue dans le binaire */}
+                {projectData.ecu_recognition && (
+                  <div className="mt-3">
+                    <EcuRecognitionCard recognition={projectData.ecu_recognition} light={L} />
+                  </div>
+                )}
               </div>
 
               {/* Project Name */}
@@ -2337,13 +2347,18 @@ function EditorPageContent() {
   // = big-endian EDC16/MJD, LoHi = EDC15), basculable dans la toolbar.
   const [hexdumpByteOrder, setHexdumpByteOrder] = useState<"hilo" | "lohi">("lohi");
   useEffect(() => {
-    // Un projet WinOLS déclare son ordre des octets : il prime sur la règle par type d'ECU
-    setProjectByteOrder(projectData?.byte_order ?? null);
+    // Un projet WinOLS (ou un fichier de définitions importé) déclare son
+    // ordre des octets : il prime sur la règle par type d'ECU. Sans détecteur
+    // Mamba ni déclaration, celui que la reconnaissance a lu dans le binaire
+    // (famille de l'ECU, ou axes de calibration).
+    const hasDetector = SUPPORTED_ECUS.has((projectData?.ecu_type || "").toUpperCase());
+    const recognisedOrder = hasDetector ? null : projectData?.ecu_recognition?.byte_order;
+    setProjectByteOrder(projectData?.byte_order ?? recognisedOrder ?? null);
     setProjectEcuType(projectData?.ecu_type ?? null);
-    if (projectData?.ecu_type) {
-      setHexdumpByteOrder(isBigEndianEcu(projectData.ecu_type) ? "hilo" : "lohi");
+    if (projectData?.ecu_type || recognisedOrder) {
+      setHexdumpByteOrder(isBigEndianEcu(projectData?.ecu_type) ? "hilo" : "lohi");
     }
-  }, [projectData?.ecu_type, projectData?.byte_order]);
+  }, [projectData?.ecu_type, projectData?.byte_order, projectData?.ecu_recognition?.byte_order]);
   // Projet refermé : la règle par type d'ECU reprend la main
   useEffect(() => () => { setProjectByteOrder(null); setProjectEcuType(null); }, []);
   const [hexdumpFormat, setHexdumpFormat] = useState<"hex" | "dec">("hex");
@@ -4199,7 +4214,13 @@ function EditorPageContent() {
             }
             detectionResults = stripSoiTag(detectionResults);
 
-            const mergedData = { ...data, file_data: fileData, detectionResults };
+            const mergedData = {
+              ...data,
+              file_data: fileData,
+              detectionResults,
+              // identité lue à la création, ou plus tard par le dashboard
+              ecu_recognition: response.data.ecu_recognition ?? data.ecu_recognition,
+            };
             setProjectData(mergedData);
 
             // Set mappack unlock status from API response
@@ -7319,7 +7340,7 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
             <div>
               <div className="text-xs" style={{ color: theme === 'light' ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.5)' }}>{t.sidebar.ecuType}</div>
               <div className="truncate" style={{ color: getTextColor() }}>
-                {formatEcuWithManufacturer(projectData.ecu_type) || t.sidebar.unknown}
+                {formatEcuWithManufacturer(projectEcuLabel(projectData)) || t.sidebar.unknown}
               </div>
             </div>
 
