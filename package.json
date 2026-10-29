@@ -1,6 +1,6 @@
 {
   "name": "mamba",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "private": true,
   "license": "GPL-3.0-only",
   "description": "Mamba - Open source ECU map editor (Bosch EDC15/EDC16), desktop app",
