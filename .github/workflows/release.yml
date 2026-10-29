@@ -1,0 +1,93 @@
+name: Release
+
+# Push a tag `vX.Y.Z` (matching the version in package.json, Cargo.toml and
+# tauri.conf.json) to build the installers and publish them as a draft
+# release. Asset names follow the convention the built-in updater expects
+# (src-tauri/src/update.rs) and install-macos.sh downloads.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+          - os: ubuntu-22.04
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Tauri system dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev patchelf
+      - run: npm ci
+
+      - name: Build (Windows)
+        if: matrix.platform == 'windows'
+        run: npx tauri build
+      - name: Build (macOS universal)
+        if: matrix.platform == 'macos'
+        run: npx tauri build --target universal-apple-darwin
+      - name: Build (Linux)
+        if: matrix.platform == 'linux'
+        run: npx tauri build
+
+      - name: Collect assets
+        shell: bash
+        run: |
+          V=$(node -p "require('./package.json').version")
+          mkdir -p dist
+          case "${{ matrix.platform }}" in
+            windows)
+              cp src-tauri/target/release/bundle/nsis/*-setup.exe "dist/Mamba_${V}_x64-setup.exe" ;;
+            macos)
+              B=src-tauri/target/universal-apple-darwin/release/bundle
+              cp "$B"/dmg/*.dmg "dist/Mamba_${V}_macos-universal.dmg"
+              tar -czf "dist/Mamba_${V}_macos-universal.app.tar.gz" -C "$B/macos" Mamba.app ;;
+            linux)
+              cp src-tauri/target/release/bundle/appimage/*.AppImage "dist/Mamba_${V}_linux-x86_64.AppImage"
+              cp src-tauri/target/release/bundle/deb/*.deb "dist/Mamba_${V}_linux-amd64.deb" ;;
+          esac
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mamba-${{ matrix.platform }}
+          path: dist/*
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: Mamba ${{ github.ref_name }}
+          files: dist/*
