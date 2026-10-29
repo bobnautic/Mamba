@@ -203,10 +203,14 @@ jobs:
             -e "s|@URL@|https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG|g" \
             -e "s|@V@|$VERSION|g" \
             -e "s|@REPO@|$GITHUB_REPOSITORY|g" notes.md
+          # A title line "Mamba X.Y.Z …" in the notes file names the release
+          # ("Mamba 0.0.1 Alpha"); otherwise it is "Mamba X.Y.Z".
+          TITLE=$(head -n 1 notes.md | tr -d '\r' | sed -n 's/^#* *\(Mamba [0-9].*\)$/\1/p')
+          echo "TITLE=${TITLE:-Mamba $VERSION}" >> "$GITHUB_ENV"
           cat notes.md
       - name: Publish
         run: |
           gh release create "$TAG" dist/* \
-            --title "Mamba $VERSION" \
+            --title "$TITLE" \
             --notes-file notes.md \
             --target "$GITHUB_SHA"

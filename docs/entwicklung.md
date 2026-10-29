@@ -67,7 +67,7 @@ Releases baut und veröffentlicht der Workflow [`.github/workflows/release.yml`]
    npm run version:set -- 1.1.0
    ```
 
-2. **Release-Notizen (optional)** in `docs/releases/v1.1.0.md` schreiben: eine Titelzeile `Mamba 1.1.0`, Abschnitte in Fett (`**Editor**`) und Punkte mit `- `. So zeigt sie auch das Update-Fenster der App an. Fehlt die Datei, nimmt der Workflow die Liste der seit dem letzten Release gemergten Pull Requests.
+2. **Release-Notizen (optional)** in `docs/releases/v1.1.0.md` schreiben: eine Titelzeile `Mamba 1.1.0`, Abschnitte in Fett (`**Editor**`) und Punkte mit `- `. So zeigt sie auch das Update-Fenster der App an. Die Titelzeile wird zum Namen des Releases und darf einen Zusatz tragen, etwa `Mamba 1.1.0 Beta`. Fehlt die Datei, nimmt der Workflow die Liste der seit dem letzten Release gemergten Pull Requests.
 3. **Mergen** nach `main`. Die CI prüft, dass die Version in allen Dateien gleich ist.
 4. **Veröffentlichen**, auf einem der beiden Wege:
    - auf GitHub unter *Actions › Release › Run workflow* mit Branch `main` und Haken bei **publish**; der Tag `v1.1.0` wird dabei angelegt, oder
