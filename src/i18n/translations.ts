@@ -427,6 +427,9 @@ export const translations = {
       sortByName: "Sort maps by name (A→Z)",
       sortByNameDesc: "Sort maps by name (Z→A)",
       sortByAddress: "Sort maps by address",
+      columnName: "Name",
+      columnAddress: "Address",
+      columnSize: "Size",
       unknown: "Unknown",
     },
     mappackHealth: {
@@ -1590,6 +1593,9 @@ export const translations = {
       sortByName: "Trier les maps par nom (A→Z)",
       sortByNameDesc: "Trier les maps par nom (Z→A)",
       sortByAddress: "Trier les maps par adresse",
+      columnName: "Nom",
+      columnAddress: "Adresse",
+      columnSize: "Taille",
       unknown: "Inconnu",
     },
     mappackHealth: {
@@ -2742,6 +2748,9 @@ export const translations = {
       sortByName: "Ordenar mapas por nombre (A→Z)",
       sortByNameDesc: "Ordenar mapas por nombre (Z→A)",
       sortByAddress: "Ordenar mapas por dirección",
+      columnName: "Nombre",
+      columnAddress: "Dirección",
+      columnSize: "Tamaño",
       unknown: "Desconocido",
     },
     mappackHealth: {
@@ -3868,6 +3877,9 @@ export const translations = {
       sortByName: "Ordina mappe per nome (A→Z)",
       sortByNameDesc: "Ordina mappe per nome (Z→A)",
       sortByAddress: "Ordina mappe per indirizzo",
+      columnName: "Nome",
+      columnAddress: "Indirizzo",
+      columnSize: "Dim.",
       unknown: "Sconosciuto",
     },
     mappackHealth: {
@@ -4994,6 +5006,9 @@ export const translations = {
       sortByName: "Kennfelder nach Name sortieren (A→Z)",
       sortByNameDesc: "Kennfelder nach Name sortieren (Z→A)",
       sortByAddress: "Kennfelder nach Adresse sortieren",
+      columnName: "Name",
+      columnAddress: "Adresse",
+      columnSize: "Größe",
       unknown: "Unbekannt",
     },
     mappackHealth: {
@@ -6120,6 +6135,9 @@ export const translations = {
       sortByName: "Ordenar os mapas por nome (A→Z)",
       sortByNameDesc: "Ordenar os mapas por nome (Z→A)",
       sortByAddress: "Ordenar os mapas por endereço",
+      columnName: "Nome",
+      columnAddress: "Endereço",
+      columnSize: "Tamanho",
       unknown: "Desconhecido",
     },
     mappackHealth: {
@@ -7244,6 +7262,9 @@ export const translations = {
       sortByName: "Sortează hărțile după nume (A→Z)",
       sortByNameDesc: "Sortează hărțile după nume (Z→A)",
       sortByAddress: "Sortează hărțile după adresă",
+      columnName: "Nume",
+      columnAddress: "Adresă",
+      columnSize: "Mărime",
       unknown: "Necunoscut",
     },
     mappackHealth: {

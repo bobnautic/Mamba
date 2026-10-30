@@ -7,7 +7,7 @@ Pour demander une fonction ou signaler un bug, ouvrez une issue sur [GitHub](htt
 ## Dans la 1.0
 
 - L'identité Mamba : nom, logo serpent, thème vert et noir, visuels de l'installeur et canal de mise à jour propre.
-- L'éditeur : détection automatique des cartographies sur Bosch EDC15P, EDC15VM+, EDC16U1, EDC16U31 et EDC16U34 ; tout autre binaire s'ouvre avec un projet WinOLS `.ols`, un `.xdf` TunerPro ou un mappack JSON ; édition en tableau, 2D, 3D et dans l'hexdump ; versions et comparaison ; banc virtuel ; DTC on/off ; correction de checksum ; export de mappack WinOLS.
+- L'éditeur : détection automatique des cartographies sur Bosch EDC15P, EDC15VM+, EDC16U1, EDC16U31 et EDC16U34 ; tout autre binaire s'ouvre avec un projet WinOLS `.ols`, un `.xdf` TunerPro ou un mappack JSON ; édition en tableau, 2D, 3D et dans l'hexdump ; versions et comparaison ; banc virtuel ; correction de checksum ; export de mappack WinOLS.
 
 ## Prévu
 

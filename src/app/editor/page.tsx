@@ -6,12 +6,9 @@ import { Button } from "@/components/ui/button";
 import {
   ChevronRight,
   ChevronDown,
-  Folder,
-  FolderOpen,
   ArrowDownAZ,
   ArrowDownZA,
   ArrowDown01,
-  FileText,
   Download,
   Save,
   Upload,
@@ -22,7 +19,6 @@ import {
   ChevronUp,
   Cpu,
   MoreVertical,
-  Wrench,
   X,
   Eye,
   RefreshCw,
@@ -39,6 +35,7 @@ import { PiHeadCircuit } from "react-icons/pi";
 import { HexdumpViewer, type MapRegion } from "@/components/hexdump-viewer";
 import { EditorToolbar, type ModifyOperation } from "@/components/editor-toolbar";
 import { MapViewer, clearMapDataCache, buildPlot3DTicks } from "@/components/map-viewer";
+import { TreeFolderIcon, MapKindIcon, mapKindOf } from "@/components/map-tree-icons";
 import { SettingsMenu } from "@/components/settings-menu";
 import {
   setAppZoom,
@@ -4868,6 +4865,10 @@ function EditorPageContent() {
     return true;
   };
 
+  // Lanceurs des outils (Solutions, codes DTC, puissance, fin d'injection).
+  // Plus aucun bouton de la barre latérale ne les appelle depuis son passage
+  // à une liste de maps façon WinOLS ; les fenêtres restent câblées.
+  // La puissance reste ouverte depuis la bibliothèque (icône tachymètre).
   const openSolutions = () => {
     if (!mappackUnlocked || olsProjectBlocked()) return;
     setIsSolutionsOpen(true);
@@ -6338,50 +6339,6 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
   // Premier clic d'un double-clic sur une ligne de la liste (issue #46)
   const sidebarClickRef = useRef<{ address: number; wasOpen: boolean; at: number } | null>(null);
 
-  // Menu du bouton Outils (sidebar dépliée ou repliée) : fermé au clic
-  // ailleurs ou à l'action choisie
-  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
-  const toolsMenuRef = useRef<HTMLDivElement | null>(null);
-  const toolsMenuCollapsedRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!toolsMenuOpen) return;
-    const close = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (toolsMenuRef.current?.contains(target) || toolsMenuCollapsedRef.current?.contains(target)) return;
-      setToolsMenuOpen(false);
-    };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [toolsMenuOpen]);
-  // Menu du bouton Outils : vide pour l'instant (décision du 28/09), le
-  // premier outil arrive à la version suivante
-  const renderToolsMenu = (placement: 'below' | 'side') => (
-    <div
-      className={`absolute z-50 min-w-[220px] p-1.5 border rounded-lg shadow-lg ${placement === 'below' ? 'top-full right-0 mt-1' : 'top-0 left-full ml-2'}`}
-      style={{
-        backgroundColor: theme === 'light' ? 'rgba(255,255,255,0.92)' : theme === 'oled' ? 'rgba(16,16,19,0.96)' : 'rgba(20,24,22,0.92)',
-        backdropFilter: 'blur(14px)',
-        WebkitBackdropFilter: 'blur(14px)',
-        borderColor: getBorderColor(),
-        color: getTextColor(),
-      }}
-    >
-      <button
-        type="button"
-        disabled={!eoiAvailable}
-        title={eoiAvailable ? undefined : t.eoiModal.menuHint}
-        onClick={() => {
-          setToolsMenuOpen(false);
-          void openEoiCalculator();
-        }}
-        className={`w-full px-3 py-1.5 text-left text-sm rounded-md flex items-center gap-2 transition-colors ${eoiAvailable ? getButtonHoverClass() : 'opacity-50 cursor-default'}`}
-      >
-        <Timer className="w-4 h-4" />
-        <span>{t.eoiModal.title}</span>
-      </button>
-    </div>
-  );
-
   const handleMapClick = (clicked: MapData) => {
     // Block map clicks when mappack is locked
     if (!mappackUnlocked) return;
@@ -6870,6 +6827,20 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
       }));
   })();
 
+  /** Taille affichée dans la colonne de la liste (« 16×10 », « 8×1 »). */
+  const mapSizeLabel = (map: MapData) =>
+    map.dimensions?.TwoDimensional
+      ? `${map.dimensions.TwoDimensional.cols}×${map.dimensions.TwoDimensional.rows}`
+      : map.dimensions?.OneDimensional
+        ? `${map.dimensions.OneDimensional.length}×1`
+        : '';
+  // Colonnes Adresse et Taille de la liste, comme dans WinOLS : largeur en ch
+  // de la police mono, celle de la plus longue valeur (au moins l'en-tête),
+  // pour que les colonnes restent alignées d'une ligne à l'autre
+  const treeMaps = projectData?.detectionResults?.maps || [];
+  const addressColWidth = `${treeMaps.reduce((w, m) => Math.max(w, m.address ? m.address.toString(16).length : 0), 7)}ch`;
+  const sizeColWidth = `${treeMaps.reduce((w, m) => Math.max(w, mapSizeLabel(m).length), 6)}ch`;
+
   const currentVersionName =
     versions.find((v) => v.id === currentVersionId)?.name ||
     (versions[0]?.name ?? "Ori");
@@ -6919,12 +6890,8 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
                   onClick={() => toggleFolder(rootKey)}
                   className={`flex items-center gap-2 flex-1 min-w-0 px-2 py-1.5 rounded ${theme === 'light' ? 'hover:bg-black/5' : 'hover:bg-white/5'} transition-colors group`}
                 >
-                  <ChevronRight className={`w-4 h-4 transition-transform duration-200 ${expandedFolders.has(rootKey) ? "rotate-90" : ""}`} style={{ color: getTextColor() }} />
-                  {expandedFolders.has(rootKey) ? (
-                    <FolderOpen className={`w-4 h-4 transition-colors ${theme === 'light' ? 'text-amber-600' : 'text-yellow-500'}`} />
-                  ) : (
-                    <Folder className={`w-4 h-4 transition-colors ${theme === 'light' ? 'text-amber-600' : 'text-yellow-500'}`} />
-                  )}
+                  <ChevronRight className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${expandedFolders.has(rootKey) ? "rotate-90" : ""}`} style={{ color: getTextColor() }} />
+                  <TreeFolderIcon open={expandedFolders.has(rootKey)} light={theme === 'light'} className="w-4 h-4 flex-shrink-0" />
                   <span className="text-sm" style={{ color: theme === 'light' ? '#000000' : 'rgba(255, 255, 255, 0.7)' }}>{rootLabel}</span>
                 </button>
                 {/* État du mappack : % de règles de complétude satisfaites
@@ -7023,7 +6990,12 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
               <div className={`overflow-hidden transition-all duration-300 ease-in-out ${
                 expandedFolders.has(rootKey) || mapSearchTerm ? "max-h-[20000px] opacity-100" : "max-h-0 opacity-0"
               }`}>
-                <div className={`ml-1 mt-1 space-y-1 ${mappackJustUnlocked ? 'mappack-unlock-anim' : ''}`}>
+                {/* Trait pointillé de l'arbre sous le chevron de la racine,
+                    comme l'arbre de WinOLS */}
+                <div
+                  className={`ml-[15px] pl-1 border-l border-dotted ${mappackJustUnlocked ? 'mappack-unlock-anim' : ''}`}
+                  style={{ borderColor: theme === 'light' ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.2)' }}
+                >
                   {folders.map((folder) => {
                     const maps = grouped[folder] || [];
                     // Vérifier si au moins une map dans ce dossier a été modifiée
@@ -7045,31 +7017,27 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
                       <div key={folder}>
                         <button
                           onClick={() => toggleFolder(folder)}
-                          className={`flex items-center gap-2 w-full px-2 py-1.5 rounded transition-colors group ${
+                          className={`flex items-center gap-1.5 w-full px-2 py-1 rounded transition-colors group ${
                             !mappackUnlocked
                               ? 'cursor-not-allowed opacity-60'
                               : (theme === 'light' ? 'hover:bg-black/5' : 'hover:bg-white/5')
                           }`}
                         >
                           {mappackUnlocked ? (
-                            <ChevronRight className={`w-3 h-3 transition-transform duration-200 ${expandedFolders.has(folder) ? "rotate-90" : ""}`} style={{ color: getTextColor() }} />
+                            <ChevronRight className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${expandedFolders.has(folder) ? "rotate-90" : ""}`} style={{ color: getTextColor() }} />
                           ) : (
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: theme === 'light' ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)' }}>
                               <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
                               <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                             </svg>
                           )}
-                          {expandedFolders.has(folder) ? (
-                            <FolderOpen className={`w-3 h-3 transition-colors ${theme === 'light' ? 'text-amber-600' : 'text-yellow-500'}`} />
-                          ) : (
-                            <Folder className={`w-3 h-3 transition-colors ${theme === 'light' ? 'text-amber-600' : 'text-yellow-500'}`} />
-                          )}
+                          <TreeFolderIcon open={expandedFolders.has(folder)} light={theme === 'light'} className="w-3.5 h-3.5 flex-shrink-0" />
                           <span
-                            className={`text-xs ${folderHasModifiedMap ? (theme === 'light' ? MODIFIED_TEXT_GRADIENT_LIGHT : MODIFIED_TEXT_GRADIENT_DARK) : ''}`}
+                            className={`text-xs truncate min-w-0 text-left ${folderHasModifiedMap ? (theme === 'light' ? MODIFIED_TEXT_GRADIENT_LIGHT : MODIFIED_TEXT_GRADIENT_DARK) : ''}`}
                             style={folderHasModifiedMap ? undefined : { color: folderTextColor }}
                           >{folder}</span>
                           <span
-                            className="text-[10px] ml-auto px-1.5 rounded-full border tabular-nums text-center"
+                            className="text-[10px] ml-auto flex-shrink-0 px-1.5 rounded-full border tabular-nums text-center"
                             style={{
                               color: folderCountColor,
                               backgroundColor: theme === 'light' ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.045)',
@@ -7092,7 +7060,10 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
                         <div className={`overflow-hidden transition-all duration-300 ease-in-out ${
                           expandedFolders.has(folder) || mapSearchTerm ? "max-h-[20000px] opacity-100" : "max-h-0 opacity-0"
                         }`}>
-                          <div className="ml-1 mt-1 space-y-0.5">
+                          <div
+                            className="ml-[13px] pl-1 border-l border-dotted"
+                            style={{ borderColor: theme === 'light' ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.2)' }}
+                          >
                             {maps.map((map, index) => {
                               const isOpen = openMaps.some((openMap) => openMap.address === map.address);
                               const isModified = allMapModifications.has(map.address) || mapAxisLabels.has(map.address);
@@ -7141,8 +7112,8 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
                                     e.preventDefault();
                                     setMapTreeContextMenu({ x: e.clientX, y: e.clientY, map });
                                   }}
-                                  title={twin ? `${t.sidebar.sameAsAppMap}: ${twin.name || ''}` : undefined}
-                                  className={`flex items-center gap-2 w-full px-2 py-1.5 rounded text-left transition-colors focus:outline-none ${twin ? 'opacity-60' : ''} ${
+                                  title={twin ? `${t.sidebar.sameAsAppMap}: ${twin.name || ''}` : (map.name || undefined)}
+                                  className={`flex items-center gap-1.5 w-full px-2 py-1 rounded text-left transition-colors focus:outline-none ${twin ? 'opacity-60' : ''} ${
                                     isOpen
                                       // Clair + modifiée : fond rouge plus léger sous le texte rouge
                                       ? (theme === 'light' && isModified ? "bg-primary/10" : "bg-primary/20")
@@ -7150,34 +7121,28 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
                                   }`}
                                   style={{ color: textColor }}
                                 >
-                                  <FileText className="w-3 h-3 flex-shrink-0" />
-                                  <span className="text-xs truncate flex-1">
-                                    {map.address ? (
-                                      <>
-                                        <span className={`font-mono ${isModified ? modifiedGradient : ''}`} style={isModified ? undefined : { color: getTextColor() }}>{map.address.toString(16).toUpperCase()}</span>
-                                        <span className={`mx-1 ${isModified ? modifiedGradient : ''}`} style={isModified ? undefined : { color: textColor }}>-</span>
-                                        <span className={isModified ? modifiedGradient : ''} style={isModified ? undefined : { color: textColorStrong }}>{map.name || `Map ${index + 1}`}</span>
-                                        {edcsuiteCodeblockId !== null && (
-                                          <span className={`ml-1 ${isModified ? modifiedGradient : ''}`} style={isModified ? undefined : { color: textColorMuted }}>[codeblock {edcsuiteCodeblockId}]</span>
-                                        )}
-                                        {twin && (
-                                          <span className="ml-1" style={{ color: textColorMuted }}>= {t.sidebar.mappack}</span>
-                                        )}
-                                      </>
-                                    ) : (
-                                      map.name || `Map ${index + 1}`
+                                  {/* Type de map (champ, courbe, valeur), comme les icônes
+                                      de la liste de WinOLS */}
+                                  <MapKindIcon kind={mapKindOf(map.dimensions, map.size)} className="w-3.5 h-3.5 flex-shrink-0" />
+                                  <span className="text-xs truncate flex-1 min-w-0">
+                                    <span className={isModified ? modifiedGradient : ''} style={isModified ? undefined : { color: textColorStrong }}>{map.name || `Map ${index + 1}`}</span>
+                                    {edcsuiteCodeblockId !== null && (
+                                      <span className={`ml-1 ${isModified ? modifiedGradient : ''}`} style={isModified ? undefined : { color: textColorMuted }}>[codeblock {edcsuiteCodeblockId}]</span>
+                                    )}
+                                    {twin && (
+                                      <span className="ml-1" style={{ color: textColorMuted }}>= {t.sidebar.mappack}</span>
                                     )}
                                   </span>
-                                  {/* Map dimensions - aligned right like folder count */}
-                                  {map.dimensions && (
-                                    <span className="text-xs font-mono flex-shrink-0" style={{ color: theme === 'light' ? 'rgba(0, 0, 0, 0.4)' : 'rgba(255, 255, 255, 0.4)' }}>
-                                      {map.dimensions.TwoDimensional
-                                        ? `${map.dimensions.TwoDimensional.cols}x${map.dimensions.TwoDimensional.rows}`
-                                        : map.dimensions.OneDimensional
-                                          ? `${map.dimensions.OneDimensional.length}x1`
-                                          : ''}
-                                    </span>
-                                  )}
+                                  {/* Colonnes Adresse et Taille, alignées sur l'en-tête */}
+                                  <span
+                                    className={`text-[11px] font-mono text-right flex-shrink-0 ${isModified ? modifiedGradient : ''}`}
+                                    style={isModified ? { width: addressColWidth } : { width: addressColWidth, color: textColor }}
+                                  >
+                                    {map.address ? map.address.toString(16).toUpperCase() : ''}
+                                  </span>
+                                  <span className="text-[11px] font-mono text-right flex-shrink-0" style={{ width: sizeColWidth, color: textColorMuted }}>
+                                    {mapSizeLabel(map)}
+                                  </span>
                                 </button>
                               );
                             })}
@@ -7216,11 +7181,9 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
           zIndex: 1
         }}
       >
-        {/* Panneau replié : logo de l'app tout en haut, bouton de dépliage
-            aligné sur la barre de titre de la fenêtre Hexdump, puis les quatre
-            actions en format compact — mêmes dégradés, mêmes règles de
-            déverrouillage que les boutons complets. Sous les feux de la
-            fenêtre sur macOS. */}
+        {/* Panneau replié : logo de l'app tout en haut, puis le bouton de
+            dépliage aligné sur la barre de titre de la fenêtre Hexdump. Sous
+            les feux de la fenêtre sur macOS. */}
         {sidebarCollapsed && (
           <div className={`flex flex-col items-center gap-2 pt-3 flex-shrink-0 ${isMacOS() ? 'mt-10' : ''}`}>
             <img src="/mamba-mark.svg" alt="Mamba" className="w-9 h-9 object-contain" />
@@ -7232,45 +7195,6 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
             >
               <PanelLeftOpen className="w-5 h-5" />
             </button>
-            <div className="flex flex-col items-center gap-2 mt-2">
-              <button
-                type="button"
-                onClick={openSolutions}
-                disabled={!mappackUnlocked}
-                title={t.sidebar.solutions}
-                className={`relative overflow-hidden rounded-lg backdrop-blur-md border w-9 h-9 flex items-center justify-center transition-all duration-300 ${!mappackUnlocked ? 'opacity-40 cursor-not-allowed' : 'hover:scale-105 hover:shadow-xl'} ${theme === 'light' ? 'bg-gradient-to-l from-mamba-700 via-mamba-600 to-venom-600 border-black/10 hover:shadow-mamba-600/35' : 'bg-gradient-to-l from-mamba-700/90 via-mamba-600/90 to-venom-600/90 border-white/15 hover:shadow-mamba-500/35'}`}
-              >
-                <PiHeadCircuit className="w-4 h-4" style={{ color: '#ffffff' }} />
-              </button>
-              <button
-                type="button"
-                onClick={openDtcCodes}
-                disabled={!mappackUnlocked}
-                title={t.sidebar.dtcCodes}
-                className={`relative overflow-hidden rounded-lg backdrop-blur-md border w-9 h-9 flex items-center justify-center transition-all duration-300 ${!mappackUnlocked ? 'opacity-40 cursor-not-allowed' : 'hover:scale-105 hover:shadow-xl'} ${theme === 'light' ? 'bg-gradient-to-l from-amber-500 via-yellow-500 to-amber-400 border-black/10 hover:shadow-amber-600/35' : 'bg-gradient-to-l from-amber-500/90 via-yellow-500/90 to-amber-400/90 border-white/15 hover:shadow-amber-500/35'}`}
-              >
-                <AlertTriangle className="w-4 h-4" style={{ color: '#ffffff' }} />
-              </button>
-              <button
-                type="button"
-                onClick={() => void openPowerEstimate()}
-                title={t.sidebar.powerEstimate}
-                className={`relative overflow-hidden rounded-lg backdrop-blur-md border w-9 h-9 flex items-center justify-center transition-all duration-300 hover:scale-105 hover:shadow-xl ${theme === 'light' ? 'bg-gradient-to-l from-blue-600 via-blue-500 to-sky-500 border-black/10 hover:shadow-blue-600/35' : 'bg-gradient-to-l from-blue-600/90 via-blue-500/90 to-sky-500/90 border-white/15 hover:shadow-blue-500/35'}`}
-              >
-                <Gauge className="w-4 h-4" style={{ color: '#ffffff' }} />
-              </button>
-              <div className="relative" ref={toolsMenuCollapsedRef}>
-                <button
-                  type="button"
-                  onClick={() => setToolsMenuOpen((v) => !v)}
-                  title={t.sidebar.tools}
-                  className={`relative overflow-hidden rounded-lg backdrop-blur-md border w-9 h-9 flex items-center justify-center transition-all duration-300 hover:scale-105 hover:shadow-xl ${theme === 'light' ? 'bg-gradient-to-l from-violet-600 via-purple-500 to-fuchsia-500 border-black/10 hover:shadow-violet-600/35' : 'bg-gradient-to-l from-violet-600/90 via-purple-500/90 to-fuchsia-500/90 border-white/15 hover:shadow-violet-500/35'}`}
-                >
-                  <Wrench className="w-4 h-4" style={{ color: '#ffffff' }} />
-                </button>
-                {toolsMenuOpen && renderToolsMenu('side')}
-              </div>
-            </div>
           </div>
         )}
         {/* Contenu du panneau : masqué mais monté quand il est replié */}
@@ -7527,94 +7451,21 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
           </div>
         </div>
 
-        {/* Boutons Solutions / DTC codes - POSITION FIXE */}
-        <div className="p-2 flex-shrink-0" style={{ borderBottom: `1px solid ${getBorderColor()}` }}>
-          <div className="grid grid-cols-2 gap-2">
-            {/* Bouton Solutions — toujours présent : sur un calculateur sans
-                solution (EDC16…), la fenêtre affiche « aucune solution
-                disponible » plutôt que de masquer le bouton */}
-            <button
-              onClick={openSolutions}
-              disabled={!mappackUnlocked}
-              className={`relative overflow-hidden rounded-xl backdrop-blur-md border px-4 py-2 flex items-center justify-center gap-2.5 transition-all duration-500 group ${
-                !mappackUnlocked
-                  ? 'opacity-40 cursor-not-allowed'
-                  : 'hover:scale-105 hover:shadow-2xl'
-              } ${
-                theme === 'light'
-                  ? 'bg-gradient-to-l from-mamba-700 via-mamba-600 to-venom-600 border-black/10 hover:shadow-mamba-600/35'
-                  : 'bg-gradient-to-l from-mamba-700/90 via-mamba-600/90 to-venom-600/90 border-white/15 hover:shadow-mamba-500/35'
-              }`}
-            >
-              {mappackUnlocked && <div className="absolute inset-0 bg-gradient-to-l from-transparent via-white/20 to-transparent translate-x-full group-hover:-translate-x-full transition-transform duration-1000" />}
-              {/* Même icône que la version web */}
-              <PiHeadCircuit className="w-5 h-5 transition-colors duration-300" style={{ color: '#ffffff' }} />
-              <span className="font-medium text-sm" style={{ color: '#ffffff' }}>{t.sidebar.solutions}</span>
-            </button>
-
-            {/* Bouton DTC codes - Dégradé ambre */}
-            <button
-              onClick={openDtcCodes}
-              disabled={!mappackUnlocked}
-              className={`relative overflow-hidden rounded-xl backdrop-blur-md border px-4 py-2 flex items-center justify-center gap-2.5 transition-all duration-500 group ${
-                !mappackUnlocked
-                  ? 'opacity-40 cursor-not-allowed'
-                  : 'hover:scale-105 hover:shadow-2xl'
-              } ${
-                theme === 'light'
-                  ? 'bg-gradient-to-l from-amber-500 via-yellow-500 to-amber-400 border-black/10 hover:shadow-amber-600/35'
-                  : 'bg-gradient-to-l from-amber-500/90 via-yellow-500/90 to-amber-400/90 border-white/15 hover:shadow-amber-500/35'
-              }`}
-            >
-              {/* Effet brillant inversé */}
-              {mappackUnlocked && <div className="absolute inset-0 bg-gradient-to-l from-transparent via-white/20 to-transparent translate-x-full group-hover:-translate-x-full transition-transform duration-1000" />}
-
-              {/* Icône triangle — blanche sur le dégradé plein, comme l'icône du menu DTC */}
-              <AlertTriangle className="w-5 h-5 transition-colors duration-300" style={{ color: '#ffffff' }} />
-              <span className="font-medium text-sm" style={{ color: '#ffffff' }}>{t.sidebar.dtcCodes}</span>
-            </button>
-
-            {/* Estimation de puissance — dégradé bleu ; lecture seule, donc
-                pas soumis au déverrouillage du mappack */}
-            <button
-              onClick={() => void openPowerEstimate()}
-              className={`relative overflow-hidden rounded-xl backdrop-blur-md border px-4 py-2 flex items-center justify-center gap-2.5 transition-all duration-500 group hover:scale-105 hover:shadow-2xl ${
-                theme === 'light'
-                  ? 'bg-gradient-to-l from-blue-600 via-blue-500 to-sky-500 border-black/10 hover:shadow-blue-600/35'
-                  : 'bg-gradient-to-l from-blue-600/90 via-blue-500/90 to-sky-500/90 border-white/15 hover:shadow-blue-500/35'
-              }`}
-            >
-              <div className="absolute inset-0 bg-gradient-to-l from-transparent via-white/20 to-transparent translate-x-full group-hover:-translate-x-full transition-transform duration-1000" />
-              <Gauge className="w-5 h-5 transition-colors duration-300" style={{ color: '#ffffff' }} />
-              <span className="font-medium text-sm whitespace-nowrap" style={{ color: '#ffffff' }}>{t.sidebar.powerEstimate}</span>
-            </button>
-
-            {/* Outils — dégradé violet, à la place de Comparer (passé en face
-                de la liste des versions le 28/09) : petit menu des outils du
-                projet */}
-            <div className="relative" ref={toolsMenuRef}>
-              <button
-                onClick={() => setToolsMenuOpen((v) => !v)}
-                className={`relative overflow-hidden rounded-xl backdrop-blur-md border px-4 py-2 w-full flex items-center justify-center gap-2.5 transition-all duration-500 group hover:scale-105 hover:shadow-2xl ${
-                  theme === 'light'
-                    ? 'bg-gradient-to-l from-violet-600 via-purple-500 to-fuchsia-500 border-black/10 hover:shadow-violet-600/35'
-                    : 'bg-gradient-to-l from-violet-600/90 via-purple-500/90 to-fuchsia-500/90 border-white/15 hover:shadow-violet-500/35'
-                }`}
-              >
-                <div className="absolute inset-0 bg-gradient-to-l from-transparent via-white/20 to-transparent translate-x-full group-hover:-translate-x-full transition-transform duration-1000" />
-                <Wrench className="w-5 h-5 transition-colors duration-300" style={{ color: '#ffffff' }} />
-                <span className="font-medium text-sm whitespace-nowrap" style={{ color: '#ffffff' }}>{t.sidebar.tools}</span>
-              </button>
-              {toolsMenuOpen && renderToolsMenu('below')}
-            </div>
-          </div>
-        </div>
-
         {/* Maps Tree - SCROLLABLE */}
-        <div className={`flex-1 min-h-0 overflow-y-auto p-2 maps-sidebar-scroll ${theme === 'light' ? 'light-theme' : ''}`}>
-          <div className="space-y-1">
+        <div className={`flex-1 min-h-0 overflow-y-auto px-2 pb-2 maps-sidebar-scroll ${theme === 'light' ? 'light-theme' : ''}`}>
+          {/* Recherche et en-tête des colonnes, fixés en haut de la liste
+              pendant le défilement, comme l'en-tête de la liste de WinOLS */}
+          <div
+            className="sticky top-0 z-10 -mx-2 px-2 pt-2"
+            style={{
+              // Opaque : les lignes qui défilent dessous ne doivent pas se
+              // lire à travers
+              background: theme === 'light' ? '#f8f9fc' : theme === 'oled' ? '#060608' : '#0f1117',
+              borderBottom: `1px solid ${getBorderColor()}`,
+            }}
+          >
             {/* Recherche de maps : filtre les deux mappacks (nom ou adresse) */}
-            <div className="relative mb-1">
+            <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: theme === 'light' ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)' }} />
               <input
                 type="text"
@@ -7638,7 +7489,28 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
                 </button>
               )}
             </div>
+            {/* Mêmes largeurs que les colonnes des lignes de maps : un bloc
+                vide en police mono donne la largeur en ch, l'intitulé garde
+                la police de l'app, calé à droite (un intitulé plus large que
+                sa colonne déborde vers la gauche, pas sur la voisine) */}
+            <div
+              className="flex items-center gap-1.5 px-2 pt-2 pb-1 text-[10px] font-medium whitespace-nowrap select-none"
+              style={{ color: theme === 'light' ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.45)' }}
+            >
+              <span className="flex-1 min-w-0 truncate">{t.sidebar.columnName}</span>
+              {[
+                { key: 'address', label: t.sidebar.columnAddress, width: addressColWidth },
+                { key: 'size', label: t.sidebar.columnSize, width: sizeColWidth },
+              ].map((col) => (
+                <span key={col.key} className="relative self-stretch flex-shrink-0">
+                  <span aria-hidden className="block h-0 font-mono text-[11px]" style={{ width: col.width }} />
+                  <span className="absolute inset-y-0 right-0 flex items-center">{col.label}</span>
+                </span>
+              ))}
+            </div>
+          </div>
 
+          <div className="space-y-1 pt-1">
             {/* Hexdump — rouvre la fenêtre hexdump quand elle a été fermée */}
             <div>
               <button

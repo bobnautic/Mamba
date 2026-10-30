@@ -7,7 +7,7 @@ Pentru a cere o funcție sau a raporta o eroare, deschide un issue pe [GitHub](h
 ## În 1.0
 
 - Identitatea Mamba: nume, logo cu șarpe, temă verde și neagră, grafica programului de instalare și canal propriu de actualizare.
-- Editorul: detectarea automată a hărților pe Bosch EDC15P, EDC15VM+, EDC16U1, EDC16U31 și EDC16U34; orice alt fișier binar se deschide cu un proiect WinOLS `.ols`, un `.xdf` TunerPro sau un mappack JSON; editare în tabel, 2D, 3D și în hexdump; versiuni și comparare; stand virtual; DTC on/off; corectarea sumei de control; export de mappack WinOLS.
+- Editorul: detectarea automată a hărților pe Bosch EDC15P, EDC15VM+, EDC16U1, EDC16U31 și EDC16U34; orice alt fișier binar se deschide cu un proiect WinOLS `.ols`, un `.xdf` TunerPro sau un mappack JSON; editare în tabel, 2D, 3D și în hexdump; versiuni și comparare; stand virtual; corectarea sumei de control; export de mappack WinOLS.
 
 ## Planificat
 

@@ -7,7 +7,7 @@ Für Funktionswünsche oder Fehlerberichte bitte ein Issue auf [GitHub](https://
 ## In 1.0
 
 - Die Mamba-Identität: Name, Schlangen-Logo, grün-schwarzes Theme, Installer-Grafiken und ein eigener Update-Kanal.
-- Der Editor: automatische Kennfelderkennung für Bosch EDC15P, EDC15VM+, EDC16U1, EDC16U31 und EDC16U34; jedes andere Binary öffnet sich mit einem WinOLS-`.ols`-Projekt, einer TunerPro-`.xdf` oder einem JSON-Mappack; Bearbeitung als Tabelle, 2D, 3D und im Hexdump; Versionen und Vergleich; virtueller Prüfstand; DTC an/aus; Prüfsummenkorrektur; WinOLS-Mappack-Export.
+- Der Editor: automatische Kennfelderkennung für Bosch EDC15P, EDC15VM+, EDC16U1, EDC16U31 und EDC16U34; jedes andere Binary öffnet sich mit einem WinOLS-`.ols`-Projekt, einer TunerPro-`.xdf` oder einem JSON-Mappack; Bearbeitung als Tabelle, 2D, 3D und im Hexdump; Versionen und Vergleich; virtueller Prüfstand; Prüfsummenkorrektur; WinOLS-Mappack-Export.
 
 ## Geplant
 
