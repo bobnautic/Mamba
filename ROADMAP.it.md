@@ -7,7 +7,7 @@ Per chiedere una funzione o segnalare un bug, apri una issue su [GitHub](https:/
 ## Nella 1.0
 
 - L'identità di Mamba: nome, logo a serpente, tema verde e nero, grafica dell'installer e canale di aggiornamento proprio.
-- L'editor: rilevamento automatico delle mappe su Bosch EDC15P, EDC15VM+, EDC16U1, EDC16U31 ed EDC16U34; qualsiasi altro binario si apre con un progetto WinOLS `.ols`, un `.xdf` di TunerPro o un mappack JSON; modifica in tabella, 2D, 3D e nell'hexdump; versioni e confronto; banco virtuale; DTC on/off; correzione del checksum; esportazione di mappack WinOLS.
+- L'editor: rilevamento automatico delle mappe su Bosch EDC15P, EDC15VM+, EDC16U1, EDC16U31 ed EDC16U34; qualsiasi altro binario si apre con un progetto WinOLS `.ols`, un `.xdf` di TunerPro o un mappack JSON; modifica in tabella, 2D, 3D e nell'hexdump; versioni e confronto; banco virtuale; correzione del checksum; esportazione di mappack WinOLS.
 
 ## Previsto
 

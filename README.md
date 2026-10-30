@@ -33,9 +33,9 @@ Mamba öffnet den Flash-Dump eines Motorsteuergeräts, erkennt Steuergerät und 
 - **Automatische Kennfelderkennung** für Bosch EDC15 und EDC16 (Rust-Engine)
 - **ECU-Erkennung für jedes Binary**: Hersteller, Familie, HW-/SW-Nummern, Motor, Byte-Reihenfolge
 - **Eigene Definitionen (Beta)**: jedes andere Steuergerät mit WinOLS-`.ols`, TunerPro-`.xdf` oder JSON-Mappack
-- **Editor**: Tabelle, 2D, 3D, Hexdump, Kopieren und Einfügen auch mit Excel
+- **Editor**: Kennfeldliste wie in WinOLS (Typ, Adresse, Größe), Tabelle, 2D, 3D, Hexdump, Kopieren und Einfügen auch mit Excel
 - **Versionen**: Original plus beliebig viele Stände, mit Byte-Vergleich
-- **Werkzeuge**: DTC an/aus, Prüfsummenkorrektur (EDC15/16), Leistungsschätzung mit PDF-Bericht
+- **Werkzeuge**: Prüfsummenkorrektur (EDC15/16), Leistungsschätzung mit PDF-Bericht
 - **Projektbibliothek**: Suche, Filter, Duplikaterkennung, Export als `.mamba`-Archiv
 - **3 Themes, 7 Sprachen, automatische Updates**
 

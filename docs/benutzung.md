@@ -12,7 +12,7 @@ Diese Anleitung führt durch die App, vom ersten Start bis zum Export der fertig
 4. [Der Editor](#4-der-editor)
 5. [Kennfelder bearbeiten](#5-kennfelder-bearbeiten)
 6. [Versionen](#6-versionen)
-7. [Werkzeuge](#7-werkzeuge)
+7. [Leistungsschätzung](#7-leistungsschätzung)
 8. [Exportieren](#8-exportieren)
 9. [Steuergeräte ohne Mamba-Detektor](#9-steuergeräte-ohne-mamba-detektor)
 10. [Einstellungen](#10-einstellungen)
@@ -49,7 +49,7 @@ Jede Zeile ist ein Projekt: ein Original-Binary mit seinen Versionen und Fahrzeu
 | Symbol | Aktion |
 |---|---|
 | ⋮ | **Projektinformationen**: Fahrzeugdaten, Kunde, Stage, FIN, Kennzeichen, Tags, Notizen; zeigt die ECU-Erkennung |
-| Tacho | **Leistungsschätzung** (siehe [Werkzeuge](#leistungsschätzung)) |
+| Tacho | **Leistungsschätzung** (siehe [Leistungsschätzung](#7-leistungsschätzung)) |
 | Kopie | **Projekt duplizieren**: Kopie mit allen Versionen |
 | Download | **Projekt exportieren (.mamba)**: Original, alle Versionen und Kennfeldänderungen in einer Datei |
 | Ordner | **Projektordner öffnen** im Dateimanager |
@@ -88,11 +88,11 @@ Oben rechts:
 - **Projekt**, **Steuergerätetyp** und **Version** mit Versionsauswahl und **⇄ Vergleichen**
 - **Checksumme**: OK, ungültig oder nicht unterstützt. Der Pfeil berechnet sie neu (EDC15/EDC16).
 - **SPEICHERN · IMPORT · EXPORT · UMBENENNEN · LÖSCHEN**: Versionen speichern und verwalten, siehe [Versionen](#6-versionen) und [Exportieren](#8-exportieren)
-- **Lösungen · DTC-Codes · Leistung · Werkzeuge**: siehe [Werkzeuge](#7-werkzeuge)
-- **Kennfeldbaum**:
-  - **Kennfeld suchen** findet Kennfelder nach Name oder Adresse.
+- **Kennfeldbaum**, aufgebaut wie die Kennfeldliste von WinOLS:
+  - **Kennfeld suchen** findet Kennfelder nach Name oder Adresse. Suche und Spaltenköpfe (**Name · Adresse · Größe**) bleiben beim Scrollen oben stehen.
   - **Hexdump** öffnet die Rohdaten.
-  - Unter **Mappack** sind die Kennfelder nach Kategorie gruppiert.
+  - Unter **Mappack** sind die Kennfelder in Ordnern nach Kategorie gruppiert. Eine gepunktete Linie verbindet jeden Ordner mit seinen Einträgen, die Zahl rechts am Ordner zeigt geänderte / alle Kennfelder.
+  - Jede Zeile zeigt Name, Adresse (hex) und Größe (Spalten × Zeilen). Das Symbol davor nennt den Typ: Tabelle = **Kennfeld**, Kurve = **Kennlinie**, einzelne Zelle = **Einzelwert**. Geänderte Kennfelder sind grün.
   - Das %-Abzeichen am Mappack ist die **Vollständigkeitsprüfung**: Es zeigt, wie viele der für diese Familie erwarteten Kennfelder gefunden wurden. Ein Klick öffnet den **Mappack-Status** mit den fehlenden Kennfeldern.
   - Daneben schaltet ein Knopf die Sortierung um (Adresse, A→Z, Z→A), und **Export** speichert das Mappack.
 
@@ -181,32 +181,11 @@ Klicke in der Seitenleiste auf **⇄**, wähle **Links** und **Rechts** (auch �
 - Mit **←** / **→** springst du von Unterschied zu Unterschied.
 - Gehört eine Stelle zu einem Kennfeld, steht dessen Name an der Stelle.
 
-## 7. Werkzeuge
-
-Die vier farbigen Knöpfe in der Seitenleiste:
-
-**DTC-Codes** (EDC15P/VM, EDC16)
-
-- Liest die Fehlercodetabelle aus dem Binary.
-- Suche nach P-Code, VAG-Code oder Text, Filter nach System.
-- Codes auswählen, dann **Ausgewählte deaktivieren** oder **Ausgewählte reaktivieren**.
-- Funktioniert nur auf einer eigenen Version, nicht auf *Ori*.
-
-**Lösungen**
-
-- Fertige Änderungen zum Anwenden. Derzeit ist das **Launch Control** für EDC15P/EDC15VM.
-- Bei anderen Steuergeräten zeigt das Fenster, dass keine Lösung verfügbar ist.
-
-**Werkzeuge → Einspritzende** (EDC15P)
-
-- Berechnet das Einspritzende aus Förderbeginn und Dauer.
-- Ergebnis als farbige Tabelle mit dem spätesten Einspritzende.
-
-### Leistungsschätzung
+## 7. Leistungsschätzung
 
 ![Leistungsschätzung](images/power.png)
 
-- Der Knopf **Leistung** (oder das Tacho-Symbol in der Bibliothek) schätzt Leistung und Drehmoment aus den Kennfeldern der gewählten Version: Fahrerwunsch bei Vollgas, begrenzt durch Drehmoment- und Rauchbegrenzer, Ladedruck und Einspritzdauer.
+- Das Tacho-Symbol in der Bibliothek schätzt Leistung und Drehmoment aus den Kennfeldern der gewählten Version: Fahrerwunsch bei Vollgas, begrenzt durch Drehmoment- und Rauchbegrenzer, Ladedruck und Einspritzdauer.
 - Einstellbar sind **Motor**, **Wirkungsgrad** und **Düsen**. Codeblöcke (EDC15) bzw. Fahrerwunsch-Kennfelder (EDC16) lassen sich als eigene Kurven ein- und ausblenden.
 - **PDF exportieren** erzeugt einen Bericht mit Kurve, wahlweise dunkel oder hell. Firmenname und Logo kommen aus den Einstellungen.
 
@@ -238,7 +217,7 @@ Jedes Binary lässt sich öffnen, auch wenn Mamba die Kennfelder dafür noch nic
    - Ein **WinOLS-`.ols`**-Projekt bringt seine Kennfelder beim Anlegen schon mit.
 3. Die importierten Kennfelder erscheinen in einem eigenen Ordner und lassen sich wie alle anderen bearbeiten und exportieren.
 
-Bei solchen Projekten sind Lösungen, DTC-Codes, Leistungsschätzung und Prüfsummenkorrektur nicht verfügbar. Fehler beim Lesen einer Datei bitte als [Issue](https://github.com/bobnautic/Mamba/issues) melden, mit Datei wenn möglich.
+Bei solchen Projekten sind Leistungsschätzung und Prüfsummenkorrektur nicht verfügbar. Fehler beim Lesen einer Datei bitte als [Issue](https://github.com/bobnautic/Mamba/issues) melden, mit Datei wenn möglich.
 
 ## 10. Einstellungen
 
